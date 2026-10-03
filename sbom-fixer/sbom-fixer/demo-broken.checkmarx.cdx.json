@@ -1,0 +1,131 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:3625ed37-9c2e-5b46-b444-b2f2356e04eb",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-02T10:00:00Z",
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "group": "aquasecurity",
+          "name": "trivy",
+          "version": "0.56.2"
+        },
+        {
+          "type": "application",
+          "name": "sbom-fixer",
+          "version": "1.0.0"
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "sbom-fixer:originalSerialNumber",
+        "value": "DEMO-0001"
+      },
+      {
+        "name": "sbom-fixer:version",
+        "value": "1.0.0"
+      },
+      {
+        "name": "sbom-fixer:sourceSpecVersion",
+        "value": "1.6"
+      },
+      {
+        "name": "sbom-fixer:sourceSha256",
+        "value": "0c52e4657440c7d9d686e1537ac9123d52c25b858c487ee69e8ab8c642c24e49"
+      },
+      {
+        "name": "sbom-fixer:profile",
+        "value": "checkmarx"
+      }
+    ],
+    "manufacture": {
+      "name": "Operative Platform Team"
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "pkg:npm/lodash@4.17.20",
+      "type": "library",
+      "name": "lodash",
+      "version": "4.17.20",
+      "purl": "pkg:npm/lodash@4.17.20",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-1",
+          "content": "2e6b4cc8c1da20f0d4fdd2e2b4e8b1c7e5b0b2a1"
+        }
+      ],
+      "evidence": {
+        "identity": {
+          "field": "name",
+          "confidence": 1
+        }
+      },
+      "externalReferences": [
+        {
+          "type": "other",
+          "url": "https://registry.npmjs.org/lodash/-/lodash%204.17.20.tgz",
+          "comment": "original type: source-distribution"
+        }
+      ],
+      "properties": [
+        {
+          "name": "sbom-fixer:omniborId",
+          "value": "[\"gitoid:blob:sha1:261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64\"]"
+        },
+        {
+          "name": "sbom-fixer:tags",
+          "value": "frontend, utility"
+        }
+      ]
+    },
+    {
+      "bom-ref": "commons-io",
+      "type": "library",
+      "group": "commons-io",
+      "name": "commons-io",
+      "version": "2.11",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "java-archive"
+        }
+      ],
+      "purl": "pkg:maven/commons-io/commons-io@2.11"
+    },
+    {
+      "bom-ref": "pkg:npm/left-pad@1.3.0",
+      "type": "library",
+      "name": "left-pad",
+      "version": "1.3.0",
+      "purl": "pkg:npm/left-pad@1.3.0"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:npm/lodash@4.17.20",
+      "dependsOn": [
+        "pkg:npm/left-pad@1.3.0"
+      ]
+    }
+  ]
+}

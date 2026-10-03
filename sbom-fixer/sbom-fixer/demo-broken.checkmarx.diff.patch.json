@@ -1,0 +1,220 @@
+[
+  {
+    "op": "replace",
+    "path": "/$schema",
+    "value": "http://cyclonedx.org/schema/bom-1.5.schema.json"
+  },
+  {
+    "op": "remove",
+    "path": "/dependencies/0/dependsOn/1"
+  },
+  {
+    "op": "remove",
+    "path": "/dependencies/1"
+  },
+  {
+    "op": "move",
+    "from": "/metadata/manufacturer",
+    "path": "/metadata/manufacture"
+  },
+  {
+    "op": "add",
+    "path": "/metadata/properties",
+    "value": [
+      {
+        "name": "sbom-fixer:originalSerialNumber",
+        "value": "DEMO-0001"
+      },
+      {
+        "name": "sbom-fixer:version",
+        "value": "1.0.0"
+      },
+      {
+        "name": "sbom-fixer:sourceSpecVersion",
+        "value": "1.6"
+      },
+      {
+        "name": "sbom-fixer:sourceSha256",
+        "value": "0c52e4657440c7d9d686e1537ac9123d52c25b858c487ee69e8ab8c642c24e49"
+      },
+      {
+        "name": "sbom-fixer:profile",
+        "value": "checkmarx"
+      }
+    ]
+  },
+  {
+    "op": "replace",
+    "path": "/metadata/timestamp",
+    "value": "2026-10-02T10:00:00Z"
+  },
+  {
+    "op": "add",
+    "path": "/metadata/tools/components/1",
+    "value": {
+      "type": "application",
+      "name": "sbom-fixer",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "op": "replace",
+    "path": "/specVersion",
+    "value": "1.5"
+  },
+  {
+    "op": "remove",
+    "path": "/components/0/x-scanner-internal"
+  },
+  {
+    "op": "remove",
+    "path": "/components/0/tags"
+  },
+  {
+    "op": "remove",
+    "path": "/components/0/omniborId"
+  },
+  {
+    "op": "remove",
+    "path": "/components/0/description"
+  },
+  {
+    "op": "add",
+    "path": "/components/0/properties",
+    "value": [
+      {
+        "name": "sbom-fixer:omniborId",
+        "value": "[\"gitoid:blob:sha1:261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64\"]"
+      },
+      {
+        "name": "sbom-fixer:tags",
+        "value": "frontend, utility"
+      }
+    ]
+  },
+  {
+    "op": "add",
+    "path": "/components/0/externalReferences/0/comment",
+    "value": "original type: source-distribution"
+  },
+  {
+    "op": "replace",
+    "path": "/components/0/externalReferences/0/url",
+    "value": "https://registry.npmjs.org/lodash/-/lodash%204.17.20.tgz"
+  },
+  {
+    "op": "replace",
+    "path": "/components/0/externalReferences/0/type",
+    "value": "other"
+  },
+  {
+    "op": "replace",
+    "path": "/components/0/type",
+    "value": "library"
+  },
+  {
+    "op": "replace",
+    "path": "/components/0/evidence/identity",
+    "value": {
+      "field": "name",
+      "confidence": 1
+    }
+  },
+  {
+    "op": "remove",
+    "path": "/components/0/licenses/0/license/acknowledgement"
+  },
+  {
+    "op": "replace",
+    "path": "/components/0/licenses/0/license/id",
+    "value": "Apache-2.0"
+  },
+  {
+    "op": "replace",
+    "path": "/components/0/hashes/0/content",
+    "value": "2e6b4cc8c1da20f0d4fdd2e2b4e8b1c7e5b0b2a1"
+  },
+  {
+    "op": "replace",
+    "path": "/components/0/hashes/0/alg",
+    "value": "SHA-1"
+  },
+  {
+    "op": "remove",
+    "path": "/components/0/hashes/1"
+  },
+  {
+    "op": "add",
+    "path": "/components/1/licenses",
+    "value": [
+      {
+        "license": {
+          "id": "MIT"
+        }
+      }
+    ]
+  },
+  {
+    "op": "replace",
+    "path": "/components/1/name",
+    "value": "commons-io"
+  },
+  {
+    "op": "replace",
+    "path": "/components/1/version",
+    "value": "2.11"
+  },
+  {
+    "op": "replace",
+    "path": "/components/1/purl",
+    "value": "pkg:maven/commons-io/commons-io@2.11"
+  },
+  {
+    "op": "replace",
+    "path": "/components/1/bom-ref",
+    "value": "commons-io"
+  },
+  {
+    "op": "move",
+    "from": "/components/2/properties",
+    "path": "/components/1/properties"
+  },
+  {
+    "op": "move",
+    "from": "/components/2/group",
+    "path": "/components/1/group"
+  },
+  {
+    "op": "remove",
+    "path": "/components/2/licenses"
+  },
+  {
+    "op": "add",
+    "path": "/components/2/purl",
+    "value": "pkg:npm/left-pad@1.3.0"
+  },
+  {
+    "op": "replace",
+    "path": "/components/2/version",
+    "value": "1.3.0"
+  },
+  {
+    "op": "replace",
+    "path": "/components/2/bom-ref",
+    "value": "pkg:npm/left-pad@1.3.0"
+  },
+  {
+    "op": "replace",
+    "path": "/components/2/name",
+    "value": "left-pad"
+  },
+  {
+    "op": "remove",
+    "path": "/components/3"
+  },
+  {
+    "op": "replace",
+    "path": "/serialNumber",
+    "value": "urn:uuid:3625ed37-9c2e-5b46-b444-b2f2356e04eb"
+  }
+]

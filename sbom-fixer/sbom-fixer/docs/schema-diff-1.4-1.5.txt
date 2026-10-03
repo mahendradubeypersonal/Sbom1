@@ -1,0 +1,104 @@
+Schema diff cyclonedx 1.4 -> 1.5
+========================================
+[(root)]
+  added properties   : annotations, formulation, properties
+  enum added   $schema: http://cyclonedx.org/schema/bom-1.5.schema.json
+  enum removed $schema: http://cyclonedx.org/schema/bom-1.4.schema.json
+[(root).annotations[]] NEW DEFINITION
+  added properties   : annotator, bom-ref, signature, subjects, text, timestamp
+[(root).formulation[]] NEW DEFINITION
+  added properties   : bom-ref, components, properties, services, workflows
+[(root).properties[]] NEW DEFINITION
+  added properties   : name, value
+[refLinkType] NEW DEFINITION
+[bomLinkDocumentType] NEW DEFINITION
+[bomLinkElementType] NEW DEFINITION
+[bomLink] NEW DEFINITION
+[metadata]
+  added properties   : lifecycles
+  type changed tools: array -> oneOf[object,array]
+[organizationalEntity]
+  added properties   : bom-ref
+[organizationalContact]
+  added properties   : bom-ref
+[component]
+  added properties   : data, modelCard
+  enum added   type: data, device-driver, machine-learning-model, platform
+[license]
+  added properties   : bom-ref, licensing, properties
+[licenseChoice]
+  removed properties : expression, license
+[externalReference]
+  enum added   type: adversary-model, attestation, certification-report, codified-infrastructure, component-analysis-report, configuration, distribution-intake, dynamic-analysis-report, evidence, exploitability-statement, formulation, log, maturity-report, model-card, pentest-report, poam, quality-metrics, risk-assessment, runtime-analysis-report, security-contact, static-analysis-report, threat-model, vulnerability-assertion
+  type changed url: string -> anyOf[string,anyOf[string,string]]
+[dependency]
+  type changed ref: string -> ?
+[service]
+  added properties   : trustZone
+[serviceData] NEW DEFINITION
+  added properties   : classification, description, destination, flow, governance, name, source
+[dataFlowDirection] NEW DEFINITION
+[componentEvidence]
+  added properties   : callstack, identity, occurrences
+[compositions]
+  added properties   : bom-ref, vulnerabilities
+  enum added   aggregate: incomplete_first_party_opensource_only, incomplete_first_party_proprietary_only, incomplete_third_party_opensource_only, incomplete_third_party_proprietary_only
+[rating]
+  enum added   method: CVSSv4, SSVC
+[vulnerability]
+  added properties   : proofOfConcept, rejected, workaround
+  type changed tools: array -> oneOf[object,array]
+[annotations] NEW DEFINITION
+  added properties   : annotator, bom-ref, signature, subjects, text, timestamp
+[modelCard] NEW DEFINITION
+  added properties   : bom-ref, considerations, modelParameters, properties, quantitativeAnalysis
+[inputOutputMLParameters] NEW DEFINITION
+  added properties   : format
+[componentData] NEW DEFINITION
+  added properties   : bom-ref, classification, contents, description, governance, graphics, name, sensitiveData, type
+[dataGovernance] NEW DEFINITION
+  added properties   : custodians, owners, stewards
+[dataGovernanceResponsibleParty] NEW DEFINITION
+  added properties   : contact, organization
+[graphicsCollection] NEW DEFINITION
+  added properties   : collection, description
+[graphic] NEW DEFINITION
+  added properties   : image, name
+[performanceMetric] NEW DEFINITION
+  added properties   : confidenceInterval, slice, type, value
+[risk] NEW DEFINITION
+  added properties   : mitigationStrategy, name
+[fairnessAssessment] NEW DEFINITION
+  added properties   : benefits, groupAtRisk, harms, mitigationStrategy
+[dataClassification]
+  removed properties : classification, flow
+[formula] NEW DEFINITION
+  added properties   : bom-ref, components, properties, services, workflows
+[workflow] NEW DEFINITION
+  added properties   : bom-ref, description, inputs, name, outputs, properties, resourceReferences, runtimeTopology, steps, taskDependencies, taskTypes, tasks, timeEnd, timeStart, trigger, uid, workspaces
+[task] NEW DEFINITION
+  added properties   : bom-ref, description, inputs, name, outputs, properties, resourceReferences, runtimeTopology, steps, taskTypes, timeEnd, timeStart, trigger, uid, workspaces
+[step] NEW DEFINITION
+  added properties   : commands, description, name, properties
+[command] NEW DEFINITION
+  added properties   : executed, properties
+[workspace] NEW DEFINITION
+  added properties   : accessMode, aliases, bom-ref, description, managedDataType, mountPath, name, properties, resourceReferences, uid, volume, volumeRequest
+[volume] NEW DEFINITION
+  added properties   : mode, name, path, persistent, properties, remote, sizeAllocated, uid
+[trigger] NEW DEFINITION
+  added properties   : bom-ref, conditions, description, event, inputs, name, outputs, properties, resourceReferences, timeActivated, type, uid
+[event] NEW DEFINITION
+  added properties   : data, description, properties, source, target, timeReceived, uid
+[inputType] NEW DEFINITION
+  added properties   : data, environmentVars, parameters, properties, resource, source, target
+[outputType] NEW DEFINITION
+  added properties   : data, environmentVars, properties, resource, source, target, type
+[resourceReferenceChoice] NEW DEFINITION
+  added properties   : externalReference, ref
+[condition] NEW DEFINITION
+  added properties   : description, expression, properties
+[taskType] NEW DEFINITION
+[parameter] NEW DEFINITION
+  added properties   : dataType, name, value
+

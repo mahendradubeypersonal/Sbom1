@@ -1,0 +1,113 @@
+SBOM FIXER NOTES
+================
+Input file      : demo-broken.cdx.json
+SHA-256         : 0c52e4657440c7d9d686e1537ac9123d52c25b858c487ee69e8ab8c642c24e49
+Detected        : CycloneDX 1.6 JSON, UTF-8
+Generator       : trivy 0.56.2
+Profile         : checkmarx  (acceptance: profile)
+Fix type        : A (same-version repair, 13 errors in own 1.6 schema) + B (downgrade 1.6 -> 1.5) + C (importer-specific fixes)
+Version path    : 1.6  0 schema errors, NOT accepted (schema-valid, but 1.6 is not in accepted_versions (1.3, 1.4, 1.5))
+                  1.5  0 schema errors, ACCEPTED (schema-valid and 1.5 is in accepted_versions)
+Result          : FIXED - output validates against CycloneDX 1.5
+Output          : demo-broken.checkmarx.cdx.json
+Exit code       : 1
+
+1. WHY THE ORIGINAL FAILED
+   [version]   schema-valid, but 1.6 is not in accepted_versions (1.3, 1.4, 1.5)
+   [schema]    Original has 13 errors against its own 1.6 schema, from 11 causes:
+               - enum                 /components/*/hashes/*/alg                         2   e.g. 'sha256' is not one of ['MD5', 'SHA-1', 'SHA-256', 'SHA-384', 'SHA-512
+               - type                 /components/*/version                              2   e.g. 2.11 is not of type 'string'
+               - additionalProperties /components/*                                      1   e.g. Additional properties are not allowed ('x-scanner-internal' was unexpe
+               - type                 /components/*/description                          1   e.g. None is not of type 'string'
+               - format               /components/*/externalReferences/*/url             1   e.g. 'https://registry.npmjs.org/lodash/-/lodash 4.17.20.tgz' is not a 'iri
+               - pattern              /components/*/hashes/*/content                     1   e.g. 'not-a-real-hash' does not match '^([a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a
+               - additionalProperties /components/*/licenses/*                           1   e.g. Additional properties are not allowed ('license' was unexpected)
+               - enum                 /components/*/type                                 1   e.g. 'Library' is not one of ['application', 'framework', 'library', 'conta
+               - type                 /components/*/licenses/*                           1   e.g. 'MIT' is not of type 'object'
+               - format               /metadata/timestamp                                1   e.g. '2026-10-02 10:00' is not a 'date-time'
+               - pattern              /serialNumber                                      1   e.g. 'DEMO-0001' does not match '^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]
+
+2. CHANGES MADE (by rule)
+   REP-001     WARN          1  $schema pointed to a different CycloneDX version than specVersion; $schema was corrected.
+                              e.g. /$schema  (1.6)
+   REP-003     INFO          3  A value was written in the wrong case or spelling (for example 'Library' or 'sha256'); it was mapped to the one allowed value it matches.
+                              e.g. /components/0/hashes/0/alg  (1.6)
+                              e.g. /components/0/hashes/1/alg  (1.6)
+                              e.g. /components/0/type  (1.6)
+   REP-004     INFO          1  A number or boolean was written where the schema expects a string (or the reverse); it was converted without changing its meaning.
+                              e.g. /components/2/version  (1.6)
+   REP-005     INFO          2  A field was null or empty where the schema requires content; the field was removed.
+                              e.g. /components/3/version  (1.6)
+                              e.g. /components/0/description  (1.6)
+   REP-007     INFO          1  serialNumber was not in urn:uuid form; a deterministic UUID was written and the old value kept in metadata.properties.
+                              e.g. /serialNumber  (1.6)
+   REP-008     WARN          1  A timestamp was not a valid ISO 8601 date-time; it was rewritten in UTC (a missing timezone is assumed to be UTC and reported).
+                              e.g. /metadata/timestamp  (1.6)
+   REP-009     INFO          1  A URL contained characters that are not allowed (for example spaces); they were percent-encoded. External references whose URL could not be repaired were removed.
+                              e.g. /components/0/externalReferences/0/url  (1.6)
+   REP-010     INFO          2  A licenses array was malformed (plain strings, unwrapped objects, id and name together, non-SPDX IDs, or expressions mixed with license objects); it was restructured without dropping license text.
+                              e.g. /components/0/licenses/0/license/id  (1.6)
+                              e.g. /components/2/licenses/0  (1.6)
+   REP-011     INFO          1  A hash value did not match its algorithm (wrong length or characters) or used an unknown algorithm; that hash was removed.
+                              e.g. /components/0/hashes/0  (1.6)
+   PRUNE-001   DATA_LOSS     1  Field is not allowed by the schema of the current version and was removed.
+                              e.g. /components/0/x-scanner-internal  (1.6)
+   SAN-011     INFO          1  A component had no purl. One was built when the ecosystem was certain (bom-ref is a purl, or a generator property names the package type); otherwise the component is reported as not scannable.
+                              e.g. /components/2/purl  (1.6)
+   SAN-020     WARN          1  Several components shared one bom-ref; duplicates were renamed with a #2, #3 suffix (dependencies keep pointing to the first).
+                              e.g. /components/1/bom-ref  (1.6)
+   SAN-021     WARN          2  Dependency entries referred to bom-refs that do not exist in the document; those edges were removed.
+                              e.g. /dependencies/0/dependsOn/1  (1.6)
+                              e.g. /dependencies/1  (1.6)
+   SAN-022     INFO          1  Top-level components with an identical purl were merged into the first one; dependency references were rewritten to it.
+                              e.g. /components/1  (1.6)
+   CDX16-001   INFO          1  metadata.manufacturer (1.6) was renamed to metadata.manufacture, its 1.5 equivalent.
+                              e.g. /metadata/manufacturer  (1.6->1.5)
+   CDX16-004   WARN          1  evidence.identity was an array (1.6 form); the entry with the highest confidence was kept as the single 1.5 object.
+                              e.g. /components/0/evidence/identity  (1.6->1.5)
+   CDX16-005   INFO          1  license acknowledgement (declared/concluded, 1.6) does not exist in 1.5 and was removed.
+                              e.g. /components/0/licenses/0/license/acknowledgement  (1.6->1.5)
+   CDX16-006   INFO          1  component.omniborId and swhid (1.6) were kept as properties sbom-fixer:omniborId / sbom-fixer:swhid.
+                              e.g. /components/0/omniborId  (1.6->1.5)
+   CDX16-007   INFO          1  tags (1.6) on components and services were kept as one property sbom-fixer:tags.
+                              e.g. /components/0/tags  (1.6->1.5)
+   CDX16-011   INFO          1  External reference types added in 1.6 (source-distribution, digital-signature, electronic-signature, rfc-9116) became 'other'; the original type is kept in comment.
+                              e.g. /components/0/externalReferences/0/type  (1.6->1.5)
+   CDX-VER     INFO          1  Declared spec version changed by one level during descent.
+                              e.g. /specVersion  (1.6->1.5)
+   SAN-090     INFO          1  sbom-fixer was added to metadata.tools and metadata.properties record the source version and hash, so the output can be traced to its original.
+                              e.g. /metadata  (1.5)
+
+3. DATA LOSS
+   PRUNE-001: 1 item(s) removed, e.g. /components/0/x-scanner-internal
+   6 change(s) need review (WARN), see section 2.
+
+4. SCAN COVERAGE
+   Components in output        : 3
+   With valid purl (scannable) : 3
+   Without purl (not scanned)  : 0
+
+5. RECOMMENDED SOURCE FIX
+   - Trivy writes CycloneDX 1.6 by default and has no version flag in many releases; keep sbom-fixer in the pipeline.
+   - [REP-001] Make the generator write a $schema URL that matches specVersion, or omit $schema.
+   - [REP-010] Use SPDX license IDs (https://spdx.org/licenses/) in the build metadata.
+   - [SAN-011] Use a generator that writes purls for every package component.
+   - [SAN-021] The generator writes dependency refs for components it does not list; report it upstream.
+
+6. COMPONENTS WITHOUT PURL
+   None.
+
+7. QUALITY AND COMPLIANCE
+                                       original       fixed
+   sbomqs score (0-10)                      n/a         n/a
+   (sbomqs not found on PATH (set SBOMQS_BIN to use it))
+   NTIA minimum elements                   FAIL        FAIL
+     Supplier name                          0/4         0/3   same
+     Component name                         4/4         3/3   -1
+     Component version                      3/4         3/3   same
+     Unique identifier                      3/4         3/3   same
+     Dependency relationships               yes         yes
+     Author of SBOM data                    yes         yes
+     Timestamp                              yes         yes
+   Quality regression: none
+

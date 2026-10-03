@@ -1,0 +1,89 @@
+{
+  "before": {
+    "ntia": {
+      "components": {
+        "Supplier name": {
+          "covered": 0,
+          "total": 4,
+          "missing_examples": [
+            "pkg:npm/lodash@4.17.20",
+            "pkg:npm/lodash@4.17.20",
+            "commons-io",
+            "pkg:npm/left-pad@1.3.0"
+          ]
+        },
+        "Component name": {
+          "covered": 4,
+          "total": 4,
+          "missing_examples": []
+        },
+        "Component version": {
+          "covered": 3,
+          "total": 4,
+          "missing_examples": [
+            "pkg:npm/left-pad@1.3.0"
+          ]
+        },
+        "Unique identifier": {
+          "covered": 3,
+          "total": 4,
+          "missing_examples": [
+            "commons-io"
+          ]
+        }
+      },
+      "document": {
+        "Dependency relationships": true,
+        "Author of SBOM data": true,
+        "Timestamp": true
+      },
+      "author_from_tools_only": false,
+      "total_components": 4,
+      "passed": false
+    },
+    "sbomqs_score": null
+  },
+  "after": {
+    "ntia": {
+      "components": {
+        "Supplier name": {
+          "covered": 0,
+          "total": 3,
+          "missing_examples": [
+            "pkg:npm/lodash@4.17.20",
+            "commons-io",
+            "pkg:npm/left-pad@1.3.0"
+          ]
+        },
+        "Component name": {
+          "covered": 3,
+          "total": 3,
+          "missing_examples": []
+        },
+        "Component version": {
+          "covered": 3,
+          "total": 3,
+          "missing_examples": []
+        },
+        "Unique identifier": {
+          "covered": 3,
+          "total": 3,
+          "missing_examples": []
+        }
+      },
+      "document": {
+        "Dependency relationships": true,
+        "Author of SBOM data": true,
+        "Timestamp": true
+      },
+      "author_from_tools_only": false,
+      "total_components": 3,
+      "passed": false
+    },
+    "sbomqs_score": null
+  },
+  "sbomqs_note": "sbomqs not found on PATH (set SBOMQS_BIN to use it)",
+  "regressions": [],
+  "frameworks": [],
+  "gate_failed": false
+}

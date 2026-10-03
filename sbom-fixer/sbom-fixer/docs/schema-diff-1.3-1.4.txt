@@ -1,0 +1,40 @@
+Schema diff cyclonedx 1.3 -> 1.4
+========================================
+[(root)]
+  added properties   : $schema, signature, vulnerabilities
+[(root).vulnerabilities[]] NEW DEFINITION
+  added properties   : advisories, affects, analysis, bom-ref, created, credits, cwes, description, detail, id, properties, published, ratings, recommendation, references, source, tools, updated
+[tool]
+  added properties   : externalReferences
+[component]
+  added properties   : releaseNotes, signature
+[externalReference]
+  enum added   type: release-notes
+[service]
+  added properties   : releaseNotes, signature
+[compositions]
+  added properties   : signature
+[localeType] NEW DEFINITION
+[releaseType] NEW DEFINITION
+[note] NEW DEFINITION
+  added properties   : locale, text
+[releaseNotes] NEW DEFINITION
+  added properties   : aliases, description, featuredImage, notes, properties, resolves, socialImage, tags, timestamp, title, type
+[advisory] NEW DEFINITION
+  added properties   : title, url
+[cwe] NEW DEFINITION
+[severity] NEW DEFINITION
+[scoreMethod] NEW DEFINITION
+[impactAnalysisState] NEW DEFINITION
+[impactAnalysisJustification] NEW DEFINITION
+[rating] NEW DEFINITION
+  added properties   : justification, method, score, severity, source, vector
+[vulnerabilitySource] NEW DEFINITION
+  added properties   : name, url
+[vulnerability] NEW DEFINITION
+  added properties   : advisories, affects, analysis, bom-ref, created, credits, cwes, description, detail, id, properties, published, ratings, recommendation, references, source, tools, updated
+[affectedStatus] NEW DEFINITION
+[version] NEW DEFINITION
+[range] NEW DEFINITION
+[signature] NEW DEFINITION
+

@@ -1,0 +1,48 @@
+Schema diff cyclonedx 1.6 -> 1.7
+========================================
+[(root)]
+  added properties   : citations
+[(root).citations[]] NEW DEFINITION
+  added properties   : attributedTo, bom-ref, expressions, note, pointers, process, signature, timestamp
+[metadata]
+  added properties   : distributionConstraints
+[tlpClassification] NEW DEFINITION
+[component]
+  added properties   : isExternal, patentAssertions, versionRange
+[hash]
+  enum added   alg: Streebog-256, Streebog-512
+[licensing] NEW DEFINITION
+  added properties   : altIds, expiration, lastRenewal, licenseTypes, licensee, licensor, purchaseOrder, purchaser
+[externalReference]
+  added properties   : properties
+  enum added   type: citation, patent, patent-assertion, patent-family
+[service]
+  added properties   : patentAssertions
+[cipherSuite]
+  added properties   : tlsGroups, tlsSignatureSchemes
+[ikeV2Enc] NEW DEFINITION
+  added properties   : algorithm, keyLength, name
+[ikeV2Prf] NEW DEFINITION
+  added properties   : algorithm, name
+[ikeV2Integ] NEW DEFINITION
+  added properties   : algorithm, name
+[ikeV2Ke] NEW DEFINITION
+  added properties   : algorithm, group
+[ikeV2Auth] NEW DEFINITION
+  added properties   : algorithm, name
+[relatedCryptographicAssets] NEW DEFINITION
+[relatedCryptographicAsset] NEW DEFINITION
+  added properties   : ref, type
+[patentFamily] NEW DEFINITION
+  added properties   : bom-ref, externalReferences, familyId, members, priorityApplication
+[patent] NEW DEFINITION
+  added properties   : abstract, applicationNumber, bom-ref, externalReferences, filingDate, grantDate, jurisdiction, patentAssignee, patentExpirationDate, patentLegalStatus, patentNumber, priorityApplication, publicationNumber, title
+[patentAssertions] NEW DEFINITION
+[patentApplicationNumber] NEW DEFINITION
+[patentJurisdiction] NEW DEFINITION
+[patentFilingDate] NEW DEFINITION
+[priorityApplication] NEW DEFINITION
+  added properties   : applicationNumber, filingDate, jurisdiction
+[citation] NEW DEFINITION
+  added properties   : attributedTo, bom-ref, expressions, note, pointers, process, signature, timestamp
+

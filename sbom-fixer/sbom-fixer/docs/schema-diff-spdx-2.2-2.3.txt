@@ -1,0 +1,7 @@
+Schema diff spdx 2.2 -> 2.3
+========================================
+[(root).packages[]]
+  added properties   : builtDate, primaryPackagePurpose, releaseDate, validUntilDate
+[(root).relationships[]]
+  enum added   relationshipType: REQUIREMENT_DESCRIPTION_FOR, SPECIFICATION_FOR
+

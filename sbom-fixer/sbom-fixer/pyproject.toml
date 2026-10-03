@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sbom-fixer"
+version = "1.0.0"
+description = "Repair SBOMs at their declared version, step down one version at a time only when needed, and explain every change."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+dependencies = [
+  "jsonschema[format-nongpl]>=4.21",
+  "fastjsonschema>=2.19",
+  "referencing>=0.35",
+  "packageurl-python>=0.15",
+  "license-expression>=30.3",
+  "jsonpatch>=1.33",
+  "pyyaml>=6.0",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.11", "types-PyYAML"]
+
+[project.scripts]
+sbom-fixer = "sbom_fixer.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["sbom_fixer*"]
+
+[tool.setuptools.package-data]
+sbom_fixer = ["data/schemas/*/*.json", "data/profiles/*.yaml", "data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true

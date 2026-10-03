@@ -1,0 +1,52 @@
+Schema diff cyclonedx 1.5 -> 1.6
+========================================
+[(root)]
+  added properties   : declarations, definitions
+  enum removed $schema: http://cyclonedx.org/schema/bom-1.5.schema.json
+[metadata]
+  added properties   : manufacturer
+[organizationalEntity]
+  added properties   : address
+[component]
+  added properties   : authors, cryptoProperties, manufacturer, omniborId, swhid, tags
+  enum added   type: cryptographic-asset
+[license]
+  added properties   : acknowledgement
+[licenseAcknowledgementEnumeration] NEW DEFINITION
+[externalReference]
+  enum added   type: digital-signature, electronic-signature, rfc-9116, source-distribution
+[dependency]
+  added properties   : provides
+  type changed ref: ? -> string
+[service]
+  added properties   : tags
+[componentEvidence]
+  type changed identity: object -> oneOf[array,object]
+[versionRange] NEW DEFINITION
+[environmentalConsiderations] NEW DEFINITION
+  added properties   : energyConsumptions, properties
+[energyConsumption] NEW DEFINITION
+  added properties   : activity, activityEnergyCost, co2CostEquivalent, co2CostOffset, energyProviders, properties
+[energyMeasure] NEW DEFINITION
+  added properties   : unit, value
+[co2Measure] NEW DEFINITION
+  added properties   : unit, value
+[energyProvider] NEW DEFINITION
+  added properties   : bom-ref, description, energyProvided, energySource, externalReferences, organization
+[postalAddress] NEW DEFINITION
+  added properties   : bom-ref, country, locality, postOfficeBoxNumber, postalCode, region, streetAddress
+[resourceReferenceChoice]
+  type changed ref: anyOf[?,string] -> anyOf[string,string]
+[componentIdentityEvidence] NEW DEFINITION
+  added properties   : concludedValue, confidence, field, methods, tools
+[standard] NEW DEFINITION
+  added properties   : bom-ref, description, externalReferences, levels, name, owner, requirements, signature, version
+[cryptoProperties] NEW DEFINITION
+  added properties   : algorithmProperties, assetType, certificateProperties, oid, protocolProperties, relatedCryptoMaterialProperties
+[cipherSuite] NEW DEFINITION
+  added properties   : algorithms, identifiers, name
+[cryptoRefArray] NEW DEFINITION
+[securedBy] NEW DEFINITION
+  added properties   : algorithmRef, mechanism
+[tags] NEW DEFINITION
+
