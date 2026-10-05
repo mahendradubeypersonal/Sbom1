@@ -20,21 +20,47 @@ _REMOVED_KEYS = {
 }
 _TOP_KEYS = {
     "name", "description", "cyclonedx", "spdx", "acceptance", "tools_form", "flatten_nested_components",
-    "require_purl", "allow_data_loss", "max_size_mb", "quality", "frameworks", "provenance",
+    "require_purl", "allow_data_loss", "max_size_mb", "quality", "frameworks", "provenance", "purl", "ensure_tools",
 }
-_SPEC_KEYS = {"floor", "accepted_versions"}
+_SPEC_KEYS = {"floor", "accepted_versions", "max_version", "future_versions"}
+_PURL_KEYS = {"supported_types", "os_types", "remap", "unsupported_action", "os_package_action", "strip_url_qualifiers",
+              "min_supported"}
 _QUALITY_KEYS = {"audit", "fail_on_regression", "min_score", "score_tolerance"}
 _FRAMEWORK_KEYS = {"id", "gate", "min_spec_version", "version_note"}
 ACCEPTANCE_MODES = ("profile", "checkmarx", "schema-only")
+FUTURE_MODES = ("reject", "downgrade")
+PURL_ACTIONS = ("keep", "remove")
 
 
 @dataclass
 class SpecRules:
     floor: str  # a version, or "declared"
     accepted_versions: list[str]
+    max_version: str | None = None  # newer declared versions are brought down to this one (future hop)
+    future_versions: str = "reject"  # reject | downgrade
 
     def floor_for(self, declared: str) -> str:
         return declared if self.floor == "declared" else self.floor
+
+
+@dataclass
+class PurlPolicy:
+    """Which purl types the consumer recognizes and what to do with the rest (rules CXP-*)."""
+
+    supported_types: dict[str, list[str]]  # consumer package manager -> accepted purl type values
+    os_types: list[str] = field(default_factory=list)
+    remap: bool = True
+    unsupported_action: str = "keep"  # keep | remove
+    os_package_action: str = "keep"  # keep | remove
+    strip_url_qualifiers: bool = True
+    min_supported: int = 1
+
+    def pm_for(self, purl_type: str) -> str | None:
+        t = purl_type.lower()
+        for pm, types in self.supported_types.items():
+            if t in types:
+                return pm
+        return None
 
 
 @dataclass
@@ -67,6 +93,8 @@ class Profile:
     quality: Quality = field(default_factory=Quality)
     frameworks: list[Framework] = field(default_factory=list)
     provenance: bool = True
+    purl: PurlPolicy | None = None
+    ensure_tools: bool = False
 
     def rules_for(self, spec: str) -> SpecRules:
         if spec not in self.specs:
@@ -97,10 +125,16 @@ def parse_profile(data: dict[str, Any], source: str = "<dict>") -> Profile:
         order = VERSION_ORDER[spec]
         floor = str(sec.get("floor", order[0]))
         accepted = [str(v) for v in sec.get("accepted_versions", [])]
-        for v in accepted + ([] if floor == "declared" else [floor]):
+        max_version = str(sec["max_version"]) if sec.get("max_version") is not None else None
+        future = str(sec.get("future_versions", "reject"))
+        for v in accepted + ([] if floor == "declared" else [floor]) + ([max_version] if max_version else []):
             if v not in order:
                 raise ProfileError(f"{spec}: version '{v}' is not one of {', '.join(order)}.")
-        specs[spec] = SpecRules(floor=floor, accepted_versions=accepted)
+        if future not in FUTURE_MODES:
+            raise ProfileError(f"{spec}: future_versions must be one of {', '.join(FUTURE_MODES)}, got '{future}'.")
+        if future == "downgrade" and not max_version:
+            raise ProfileError(f"{spec}: future_versions: downgrade needs max_version.")
+        specs[spec] = SpecRules(floor=floor, accepted_versions=accepted, max_version=max_version, future_versions=future)
     acceptance = data.get("acceptance", "profile")
     if acceptance not in ACCEPTANCE_MODES:
         raise ProfileError(f"acceptance must be one of {', '.join(ACCEPTANCE_MODES)}, got '{acceptance}'.")
@@ -137,7 +171,34 @@ def parse_profile(data: dict[str, Any], source: str = "<dict>") -> Profile:
         quality=quality,
         frameworks=frameworks,
         provenance=bool(data.get("provenance", True)),
+        purl=_parse_purl(data.get("purl")),
+        ensure_tools=bool(data.get("ensure_tools", False)),
     )
+
+
+def _parse_purl(sec: Any) -> PurlPolicy | None:
+    if sec is None:
+        return None
+    if not isinstance(sec, dict):
+        raise ProfileError("purl must be a mapping.")
+    _check_keys("purl", sec, _PURL_KEYS)
+    types = sec.get("supported_types")
+    if not isinstance(types, dict) or not types:
+        raise ProfileError("purl.supported_types must map package managers to lists of purl types.")
+    supported = {str(pm): [str(t).lower() for t in (ts or [])] for pm, ts in types.items()}
+    policy = PurlPolicy(
+        supported_types=supported,
+        os_types=[str(t).lower() for t in sec.get("os_types") or []],
+        remap=bool(sec.get("remap", True)),
+        unsupported_action=str(sec.get("unsupported_action", "keep")),
+        os_package_action=str(sec.get("os_package_action", "keep")),
+        strip_url_qualifiers=bool(sec.get("strip_url_qualifiers", True)),
+        min_supported=int(sec.get("min_supported", 1)),
+    )
+    for key in ("unsupported_action", "os_package_action"):
+        if getattr(policy, key) not in PURL_ACTIONS:
+            raise ProfileError(f"purl.{key} must be one of {', '.join(PURL_ACTIONS)}.")
+    return policy
 
 
 def load_profile(name_or_path: str) -> Profile:

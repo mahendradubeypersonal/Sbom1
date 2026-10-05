@@ -34,6 +34,9 @@ Generated with `sbom-fixer rules --markdown`. Case A = same-version repair, B = 
 | CDX17-001 | B | hop | 1.7 -> 1.6 | CycloneDX 1.7 component fields versionRange and isExternal do not exist in 1.6; they were kept as properties. |
 | CDX17-002 | B | hop | 1.7 -> 1.6 | CycloneDX 1.7 patent assertions, citations and metadata.distributionConstraints have no 1.6 equivalent and were removed. |
 | CDX17-ENUM | B | hop | 1.7 -> 1.6 | Enum values that exist only in CycloneDX 1.7 were mapped: new external reference types became 'other' (original kept in comment); Streebog hashes were removed. |
+| CDX-FWD-001 | B | hop |  | The SBOM declared a CycloneDX version newer than this tool knows (for example 1.8); specVersion was set to the profile's max_version and the document was checked against that schema (generic future hop). |
+| CDX-FWD-002 | B | hop |  | A field that the target CycloneDX version does not define was moved into a property sbom-fixer:cdxNN:<field> where the object allows properties; otherwise it was removed (DATA_LOSS). |
+| CDX-FWD-003 | B | hop |  | A value that the target CycloneDX version does not allow (a new enum value) became 'other' where the schema allows it, with the original value kept; otherwise the value was removed (DATA_LOSS). |
 | REP-001 | A | repair |  | $schema pointed to a different CycloneDX version than specVersion; $schema was corrected. |
 | REP-002 | A | repair |  | specVersion was written as a number; it must be a string such as "1.5". |
 | REP-003 | A | repair |  | A value was written in the wrong case or spelling (for example 'Library' or 'sha256'); it was mapped to the one allowed value it matches. |
@@ -50,9 +53,11 @@ Generated with `sbom-fixer rules --markdown`. Case A = same-version repair, B = 
 | SAN-002 | C | sanitize |  | Empty arrays and objects in optional fields were removed (dependsOn is kept, because an empty dependsOn means 'no dependencies'). |
 | SAN-003 | C | sanitize |  | The BOM had no serialNumber; a deterministic urn:uuid derived from the input was added. |
 | SAN-004 | C | sanitize |  | metadata.timestamp had a timezone offset; it was normalized to UTC 'Z' form. A missing timestamp is reported, never invented. |
+| SAN-009 | C | sanitize |  | The purl field held a web URL (https://...), which is not a purl. A registry URL was converted to the exact purl; any other URL was moved to externalReferences and the component reported as not scannable. |
 | SAN-010 | C | sanitize |  | A purl did not parse; characters were percent-encoded where that made it valid, otherwise the purl was removed and the component reported as not scannable. |
 | SAN-011 | C | sanitize |  | A component had no purl. One was built when the ecosystem was certain (bom-ref is a purl, or a generator property names the package type); otherwise the component is reported as not scannable. |
 | SAN-012 | C | sanitize |  | Components with purl types such as generic or github are kept but counted separately, because SCA scanners usually do not match them. |
+| SAN-013 | C | sanitize |  | The SBOM named no generating tool (CycloneDX metadata.tools, SPDX creationInfo creators 'Tool:'); sbom-fixer was added as the default tool, because some importers expect at least one. |
 | SAN-020 | C | sanitize |  | Several components shared one bom-ref; duplicates were renamed with a #2, #3 suffix (dependencies keep pointing to the first). |
 | SAN-021 | C | sanitize |  | Dependency entries referred to bom-refs that do not exist in the document; those edges were removed. |
 | SAN-022 | C | sanitize |  | Top-level components with an identical purl were merged into the first one; dependency references were rewritten to it. |
@@ -61,7 +66,20 @@ Generated with `sbom-fixer rules --markdown`. Case A = same-version repair, B = 
 | SAN-050 | C | sanitize |  | Nested components were moved to the top-level components list, which the profile requires. |
 | SAN-060 | C | final |  | The document carried a signature; any change invalidates it, so it was removed. Re-sign the output if signatures are required. |
 | SAN-090 | C | final |  | sbom-fixer was added to metadata.tools and metadata.properties record the source version and hash, so the output can be traced to its original. |
+| CXP-001 | C | sanitize |  | The purl type (or the 'pkg:' prefix) was not lower case; it was lower-cased as the purl specification requires. |
+| CXP-002 | C | sanitize |  | An npm scope was written as '@scope'; Checkmarx only matches the encoded form '%40scope', so '@' was percent-encoded. |
+| CXP-010 | C | sanitize |  | A Go module was identified as pkg:github (not scanned by Checkmarx); the generator marks it as a Go module, so it was rewritten to pkg:golang/github.com/... The original purl is kept in sbom-fixer:original-purl. |
+| CXP-011 | C | sanitize |  | A pkg:generic purl (not scanned by Checkmarx) belonged to a component whose generator property names the ecosystem; it was rebuilt as that ecosystem's purl from the component's name, group and version. |
+| CXP-012 | C | sanitize |  | A pkg:generic purl carried a download_url / repository_url / vcs_url on a known package registry (Maven Central, npm, PyPI, NuGet, RubyGems, Go proxy, pub.dev); it was rewritten to that registry's purl. |
+| CXP-013 | C | sanitize |  | The purl used a type that is not in the purl specification but has exactly one meaning (nodejs/node -> npm, dotnet/nupkg -> nuget, jar -> maven when a groupId is present); the type was replaced. |
+| CXP-003 | C | sanitize |  | A supported purl had no version, which makes Checkmarx check the latest version instead; the component's own version was added. Without any version the component is reported (results may not match the version in use). |
+| CXP-004 | C | sanitize |  | A Maven-family purl (maven, gradle, sbt, ivy) had no namespace (groupId), so Checkmarx cannot look it up; the component's group was used. Without a group the component is reported. |
+| CXP-005 | C | sanitize |  | A supported purl carried URL-valued qualifiers or subpath (for example repository_url=https://...). Checkmarx documents purls as pkg:type/[namespace/]name@version and matches by name and version, so they were removed; the original purl is kept in sbom-fixer:original-purl. |
+| CXP-020 | C | sanitize |  | The component's purl type is not in the Checkmarx supported list (for example cargo, hex, generic, docker, github); Checkmarx skips it silently. It is kept and listed (or removed when unsupported_action: remove). |
+| CXP-021 | C | sanitize |  | The component is an operating-system package (rpm, apk, alpm, or deb from a Linux distribution). Checkmarx does not scan OS packages and reads deb as a C++ (Conan) package, so results for it may be wrong. It is kept and listed (or removed when os_package_action: remove). |
+| CXP-030 | C | sanitize |  | The component has no purl, only a CPE, SWID or hash; Checkmarx skips such components silently. A purl is never derived from a CPE, because the mapping is not reliable. |
+| CXP-051 | C | sanitize |  | The SPDX document has no DESCRIBES or DEPENDS_ON relationship; Checkmarx then treats every package as a direct dependency. Relationships are never invented. |
 | SPDX23-001 | B | hop | 2.3 -> 2.2 | Package fields added in SPDX 2.3 (primaryPackagePurpose, releaseDate, builtDate, validUntilDate) were moved into the package comment. |
 | SPDX23-002 | B | hop | 2.3 -> 2.2 | Relationship types added in SPDX 2.3 (REQUIREMENT_DESCRIPTION_FOR, SPECIFICATION_FOR) became OTHER with the original type in the comment. |
 
-Additional IDs written by the pipeline: ENC-001/002/003 (encoding), CDX-VER / SPDX-VER (version change), PRUNE-001 (field not allowed by the current schema, always DATA_LOSS).
+Additional IDs written by the pipeline: ENC-001/002/003 (encoding), CDX-VER / SPDX-VER (version change), PRUNE-001 (field not allowed by the current schema, always DATA_LOSS). Exit code 7 (no component with a purl type the profile supports) is a pipeline gate, not a rule.

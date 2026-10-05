@@ -28,6 +28,20 @@ def available_versions(spec: str) -> list[str]:
     return list(VERSION_ORDER.get(spec, []))
 
 
+def version_key(version: str) -> tuple[int, ...] | None:
+    try:
+        return tuple(int(x) for x in version.split("."))
+    except ValueError:
+        return None
+
+
+def is_future(spec: str, version: str) -> bool:
+    """True for a version newer than every vendored one with the same major number (CycloneDX 1.8 today)."""
+    known = VERSION_ORDER.get(spec, [])
+    key, newest = version_key(version), version_key(known[-1]) if known else None
+    return key is not None and newest is not None and key[0] == newest[0] and key > newest
+
+
 def schema_url(version: str) -> str:
     return f"http://cyclonedx.org/schema/bom-{version}.schema.json"
 

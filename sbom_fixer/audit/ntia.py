@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from ..jsonutil import iter_components
+from ..purlmap import try_purl
 
 COMPONENT_FIELDS = ("Supplier name", "Component name", "Component version", "Unique identifier")
 DOC_FIELDS = ("Dependency relationships", "Author of SBOM data", "Timestamp")
@@ -61,7 +62,8 @@ def _cdx(doc: dict[str, Any]) -> NtiaReport:
         "Supplier name": _cov([(label(p, c), supplier(c)) for p, c in comps]),
         "Component name": _cov([(label(p, c), bool(c.get("name"))) for p, c in comps]),
         "Component version": _cov([(label(p, c), bool(c.get("version")) and c.get("version") != "unknown") for p, c in comps]),
-        "Unique identifier": _cov([(label(p, c), bool(c.get("purl") or c.get("cpe") or c.get("swid"))) for p, c in comps]),
+        # a purl only identifies the component when it parses (a URL in the purl field does not)
+        "Unique identifier": _cov([(label(p, c), bool(try_purl(c.get("purl")) or c.get("cpe") or c.get("swid"))) for p, c in comps]),
     }
     meta = doc.get("metadata") or {}
     deps = doc.get("dependencies") or []

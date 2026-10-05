@@ -1,0 +1,72 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-02T10:00:00Z",
+    "authors": [
+      {
+        "name": "Platform Team"
+      }
+    ],
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "corpus-generator",
+          "version": "1.0"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "ref-axios-1.6.2",
+      "type": "library",
+      "name": "axios",
+      "version": "1.6.2",
+      "purl": "https://registry.npmjs.org/axios/-/axios-1.6.2.tgz"
+    },
+    {
+      "bom-ref": "ref-snakeyaml-2.2",
+      "type": "library",
+      "name": "snakeyaml",
+      "version": "2.2",
+      "purl": "https://repo1.maven.org/maven2/org/yaml/snakeyaml/2.2/snakeyaml-2.2.jar"
+    },
+    {
+      "bom-ref": "ref-widget-2.0.0",
+      "type": "library",
+      "name": "widget",
+      "version": "2.0.0",
+      "purl": "https://github.com/acme/widget"
+    },
+    {
+      "bom-ref": "ref-tool-1.0",
+      "type": "library",
+      "name": "tool",
+      "version": "1.0",
+      "purl": "https://downloads.example.com/tool-1.0.zip"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "ref-axios-1.6.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-snakeyaml-2.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-widget-2.0.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-tool-1.0",
+      "dependsOn": []
+    }
+  ]
+}

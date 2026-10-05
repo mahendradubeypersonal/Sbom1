@@ -1,0 +1,148 @@
+"""Version policy: 1.6 / 1.7 kept, 1.8+ generic future hop, 2.x refused, checkmarx-cli caps at 1.6."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from sbom_fixer.changes import DATA_LOSS
+from sbom_fixer.errors import ProfileError
+from sbom_fixer.pipeline import run_fix
+from sbom_fixer.profile import Profile, load_profile, parse_profile
+from sbom_fixer.schemas import is_future
+from sbom_fixer.serialize import write_json
+from sbom_fixer.validate import validate
+
+from .conftest import CORPUS, bom, ids, run
+
+
+def future_doc(version: str = "1.8", **comp_extra: Any) -> dict[str, Any]:
+    d = bom("1.7")
+    d["specVersion"] = version
+    d["metadata"]["tools"] = {"components": [{"type": "application", "name": "gen", "version": "1"}]}
+    d["components"][0].update(comp_extra)
+    return d
+
+
+def test_is_future() -> None:
+    assert is_future("cyclonedx", "1.8") and is_future("cyclonedx", "1.10")
+    assert not is_future("cyclonedx", "1.7") and not is_future("cyclonedx", "2.0") and not is_future("cyclonedx", "1.1")
+    assert not is_future("cyclonedx", "abc")
+
+
+@pytest.mark.parametrize("version", ["1.6", "1.7"])
+def test_16_and_17_are_kept(checkmarx: Profile, version: str) -> None:
+    d = bom(version)
+    d["metadata"]["tools"] = {"components": [{"type": "application", "name": "gen", "version": "1"}]}
+    out, res, log = run(d, checkmarx)
+    assert res.ok and res.final_version == version and res.path == [version] and not log.changes
+
+
+def test_checkmarx_cli_takes_17_to_16() -> None:
+    d = bom("1.7")
+    d["metadata"]["tools"] = {"components": [{"type": "application", "name": "gen", "version": "1"}]}
+    out, res, _ = run(d, load_profile("checkmarx-cli"))
+    assert res.final_version == "1.6" and res.path == ["1.7", "1.6"] and out["specVersion"] == "1.6"
+
+
+def test_future_hop_to_17(checkmarx: Profile) -> None:
+    out, res, log = run(future_doc(newField18="v"), checkmarx)
+    assert res.ok and res.final_version == "1.7" and res.path == ["1.8", "1.7"]
+    assert out["specVersion"] == "1.7" and validate(out, "cyclonedx", "1.7") == []
+    assert {"name": "sbom-fixer:cdx18:newField18", "value": "v"} in out["components"][0]["properties"]
+    assert {"CDX-FWD-001", "CDX-FWD-002"} <= ids(log)
+    assert next(c for c in log.changes if c.rule_id == "CDX-FWD-001").level == "1.8->1.7"
+
+
+def test_future_hop_schema_url_updated(checkmarx: Profile) -> None:
+    d = future_doc()
+    d["$schema"] = "http://cyclonedx.org/schema/bom-1.8.schema.json"
+    out, _, _ = run(d, checkmarx)
+    assert out["$schema"] == "http://cyclonedx.org/schema/bom-1.7.schema.json"
+
+
+def test_future_hop_object_value_as_json_property(checkmarx: Profile) -> None:
+    d = future_doc()
+    d["metadata"]["distributionScope"] = {"level": "internal"}
+    out, res, _ = run(d, checkmarx)
+    assert res.ok and {"name": "sbom-fixer:cdx18:distributionScope", "value": '{"level": "internal"}'} in out["metadata"]["properties"]
+
+
+def test_future_hop_field_where_no_properties_allowed_is_data_loss(checkmarx: Profile) -> None:
+    d = future_doc()
+    d["components"][0]["licenses"] = [{"license": {"id": "MIT", "newLicenseField": "x"}}]
+    out, res, log = run(d, checkmarx)
+    assert res.ok and "newLicenseField" not in out["components"][0]["licenses"][0]["license"]
+    assert any(c.rule_id == "CDX-FWD-002" and c.severity == DATA_LOSS for c in log.changes)
+
+
+def test_future_hop_huge_value_is_data_loss(checkmarx: Profile) -> None:
+    out, res, log = run(future_doc(newBlob={"x": "a" * 5000}), checkmarx)
+    assert res.ok and "newBlob" not in out["components"][0]
+    assert any(c.rule_id == "CDX-FWD-002" and c.severity == DATA_LOSS for c in log.changes)
+
+
+def test_future_hop_enum_to_other_with_comment(checkmarx: Profile) -> None:
+    d = future_doc(externalReferences=[{"type": "sbom-registry-v2", "url": "https://example.com/sbom"}])
+    out, res, log = run(d, checkmarx)
+    ref = out["components"][0]["externalReferences"][0]
+    assert res.ok and ref["type"] == "other" and ref["comment"] == "original type: sbom-registry-v2"
+    assert any(c.rule_id == "CDX-FWD-003" and c.severity == "WARN" for c in log.changes)
+
+
+def test_future_hop_enum_without_other_is_removed(checkmarx: Profile) -> None:
+    d = future_doc()
+    d["components"][0]["hashes"] = [{"alg": "SHA3-1024", "content": "a" * 64}, {"alg": "SHA-256", "content": "b" * 64}]
+    out, res, log = run(d, checkmarx)
+    assert res.ok and validate(out, "cyclonedx", "1.7") == []
+    assert any(c.rule_id == "CDX-FWD-003" and c.severity == DATA_LOSS for c in log.changes)
+
+
+def test_future_hop_then_cli_cap(tmp_path: Path) -> None:
+    out, res, _ = run(future_doc(newField18="v"), load_profile("checkmarx-cli"))
+    assert res.path == ["1.8", "1.7", "1.6"] and res.final_version == "1.6"
+
+
+def test_future_reject_profile() -> None:
+    prof = parse_profile({"name": "strict", "cyclonedx": {"floor": "1.3", "accepted_versions": ["1.5", "1.6", "1.7"]},
+                          "provenance": False})
+    _, res, _ = run(future_doc(), prof)
+    assert not res.ok and "future_versions: reject" in res.attempts[0].reason
+
+
+def test_major_2_refused(checkmarx: Profile) -> None:
+    _, res, log = run(future_doc("2.0"), checkmarx)
+    assert not res.ok and "VER-002" in res.attempts[0].reason and not log.changes
+
+
+def test_future_end_to_end(tmp_path: Path) -> None:
+    r = run_fix(CORPUS / "future" / "min-cdx-1.8.json", load_profile("checkmarx"), tmp_path)
+    assert r.exit_code == 1 and r.final_version == "1.7"
+    notes = Path(r.outputs["notes"]).read_text(encoding="utf-8")
+    assert "B (downgrade 1.8 -> 1.7)" in notes and "generic future hop to 1.7" in notes and "CDX-FWD-002" in notes
+    again = run_fix(Path(r.outputs["sbom"]), load_profile("checkmarx"), tmp_path / "again")
+    assert again.exit_code == 0
+
+
+def test_future_check_command_is_read_only(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from sbom_fixer.cli import app
+
+    src = tmp_path / "f.json"
+    write_json(future_doc(), src)
+    res = CliRunner().invoke(app, ["check", str(src)])
+    assert res.exit_code == 1 and "level 1.7  : ACCEPTED" in res.output
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["f.json"]
+
+
+@pytest.mark.parametrize("sec,msg", [
+    ({"floor": "1.3", "accepted_versions": ["1.5"], "future_versions": "downgrade"}, "needs max_version"),
+    ({"floor": "1.3", "accepted_versions": ["1.5"], "future_versions": "maybe", "max_version": "1.7"}, "future_versions must be"),
+    ({"floor": "1.3", "accepted_versions": ["1.5"], "future_versions": "downgrade", "max_version": "1.9"}, "not one of"),
+])
+def test_future_profile_validation(sec: dict[str, Any], msg: str) -> None:
+    with pytest.raises(ProfileError, match=msg):
+        parse_profile({"name": "x", "cyclonedx": sec})

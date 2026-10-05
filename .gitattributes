@@ -1,0 +1,4 @@
+# Vendored sbomqs (tools/vendor_sbomqs.py): byte-for-byte, so tools/sbomqs/SHA256SUMS stays valid on every OS.
+tools/sbomqs/** -text
+*.exe binary
+*.tar.gz binary

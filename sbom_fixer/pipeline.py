@@ -19,11 +19,13 @@ from .diff import human_diff, machine_diff
 from .errors import DetectError, SbomFixerError
 from .oracle import AcceptanceClient, oracle_for
 from .profile import Profile
+from .purlmap import Coverage, classify, coverage_csv
 from .schemas import VERSION_ORDER
 from .serialize import dumps, write_json, write_text
 from .validate import Issue, validate
 
 EXIT_OK, EXIT_FIXED, EXIT_CANNOT_FIX, EXIT_DATA_LOSS, EXIT_QUALITY, EXIT_VERIFY, EXIT_BISECT = 0, 1, 2, 3, 4, 5, 6
+EXIT_NO_SCANNABLE = 7  # CXP-040: the consumer would reject the file, no component has a supported purl
 
 
 @dataclass
@@ -43,6 +45,8 @@ class RunResult:
     error: str | None = None
     outputs: dict[str, str] = field(default_factory=dict)
     verification: dict[str, Any] | None = None
+    coverage_before: Coverage | None = None
+    coverage: Coverage | None = None
 
     @property
     def spec(self) -> str:
@@ -138,6 +142,10 @@ def run_fix(input_path: Path, profile: Profile, out_dir: Path | None = None, *, 
                                       after_score.score if after_score else None, profile, detected.spec,
                                       result.final_version or detected.version, doc, note)
 
+    if profile.purl is not None:
+        result.coverage_before = classify(result.original_doc, detected.spec, profile.purl)
+        if result.ok:
+            result.coverage = classify(doc, detected.spec, profile.purl, log)
     result.exit_code = _exit_code(result)
     if write:
         _write_reports(result, out_dir, stem, dry_run)
@@ -147,6 +155,9 @@ def run_fix(input_path: Path, profile: Profile, out_dir: Path | None = None, *, 
 def _exit_code(result: RunResult) -> int:
     if not result.ok:
         return EXIT_CANNOT_FIX
+    policy = result.profile.purl
+    if policy is not None and result.coverage is not None and result.coverage.scanned < policy.min_supported:
+        return EXIT_NO_SCANNABLE
     if result.profile.require_purl == "fail":
         from .notes import scan_coverage
 
@@ -168,7 +179,7 @@ def _write_reports(result: RunResult, out_dir: Path, stem: str, dry_run: bool) -
 
     out_dir.mkdir(parents=True, exist_ok=True)
     base = f"{stem}.{result.profile.name}"
-    changes = {
+    changes: dict[str, Any] = {
         "input": result.input_name,
         "source_sha256": result.source_sha256,
         "spec": result.spec,
@@ -181,6 +192,9 @@ def _write_reports(result: RunResult, out_dir: Path, stem: str, dry_run: bool) -
         "changes": [c.to_dict() for c in result.log.changes],
         "findings": [f.__dict__ for f in result.log.findings],
     }
+    if result.coverage_before is not None:
+        changes["checkmarx_coverage"] = {"before": result.coverage_before.summary(),
+                                         "after": result.coverage.summary() if result.coverage else None}
     write_text(json.dumps(changes, indent=2, ensure_ascii=False, default=str) + "\n", out_dir / f"{base}.changes.json")
     result.outputs["changes"] = str(out_dir / f"{base}.changes.json")
     if result.ok and result.fixed_doc is not None:
@@ -189,6 +203,9 @@ def _write_reports(result: RunResult, out_dir: Path, stem: str, dry_run: bool) -
         write_text(human_diff(result.original_doc, result.fixed_doc, result.input_name, result.log, patch), out_dir / f"{base}.diff.txt")
         result.outputs["patch"] = str(out_dir / f"{base}.diff.patch.json")
         result.outputs["diff"] = str(out_dir / f"{base}.diff.txt")
+    if result.coverage is not None:
+        write_text(coverage_csv(result.coverage), out_dir / f"{base}.purl-coverage.csv")
+        result.outputs["coverage"] = str(out_dir / f"{base}.purl-coverage.csv")
     if result.quality:
         write_text(json.dumps(result.quality.to_dict(), indent=2, ensure_ascii=False, default=str) + "\n",
                    out_dir / f"{base}.quality.json")

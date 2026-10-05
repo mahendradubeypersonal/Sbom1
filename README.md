@@ -9,6 +9,16 @@ For each SBOM the tool:
 3. If not, it steps down **one version** (for example 1.6 to 1.5), applies that hop's rules, and checks again.
 4. It repeats until a level is OK or the floor is reached (exit code 2, with every attempt reported).
 
+For Checkmarx (profiles `checkmarx` and `checkmarx-cli`) it also:
+
+- keeps CycloneDX 1.6 and 1.7 at their own version (`checkmarx-cli` takes 1.7 to 1.6, because the `cx` CLI reads up to 1.6);
+- brings a newer CycloneDX version (1.8, 1.9, ...) down to 1.7 with a generic "future hop" (CDX-FWD-*);
+- keeps every purl type Checkmarx supports as written, repairs the format Checkmarx cannot match (npm `@` scope, missing version or groupId, URL qualifiers), remaps unsupported types only on hard evidence (CXP-010..013) and lists every component Checkmarx will skip;
+- converts a purl written as a web URL (`https://...`) into the real purl when it is a registry URL (SAN-009);
+- adds sbom-fixer as the default tool when the SBOM names none (SAN-013).
+
+Details and the Checkmarx sources: `docs/checkmarx-version-purl-fix.md`.
+
 Every edit is recorded with a rule ID, so the diff, the notes file and the change log always match what happened.
 
 Background: `SBOM_Fixer_Guide.md`, `SBOM_Fixer_Implementation_Plan.md` and `SBOM_Fixer_Jira_Stories/` (decisions ADR-01 to ADR-19).
@@ -29,12 +39,15 @@ docker run --rm -v "$PWD:/work" -w /work sbom-fixer:1.0.0 fix build/sbom.json --
 
 Python 3.11 or newer. The tool never uses the network except for the optional Checkmarx commands.
 
+The sbomqs quality score works offline out of the box: sbomqs 2.1.2 is vendored in `tools/sbomqs` (Windows x64 binary, Linux x64 archive, checksums, licence) and found automatically. Order: `SBOMQS_BIN`, then `tools/sbomqs`, then `PATH`. `sbom-fixer audit <file>` prints the score, grade and the binary it used. Details: `tools/sbomqs/README.md`.
+
 ## Use
 
 ```bash
 sbom-fixer check sbom.json                          # read-only: errors grouped by cause + version path a fix would take
 sbom-fixer fix sbom.json --out out/                 # write the fixed SBOM and reports (profile: checkmarx)
 sbom-fixer fix sbom.json -p checkmarx -p compliance # Checkmarx copy + compliance copy in one run
+sbom-fixer fix sbom.json -p checkmarx-cli           # for upload with the cx CLI (CycloneDX up to 1.6)
 sbom-fixer audit sbom.json                          # NTIA minimum elements + sbomqs score only
 sbom-fixer schema-diff 1.5 1.6                      # what changed between two schema versions
 sbom-fixer rules                                    # every rule with its case and kind
@@ -65,6 +78,7 @@ For `out/<name>.<profile>.*`:
 | `<name>.checkmarx.changes.json` | Change log: every change with rule ID, path, before, after, severity, level |
 | `<name>.checkmarx.notes.txt` | Why the original failed, version path, changes by rule, data loss, scan coverage, source fixes, quality |
 | `<name>.checkmarx.quality.json` | NTIA coverage and sbomqs score before and after, framework results |
+| `<name>.checkmarx.purl-coverage.csv` | One row per component: original and final purl, Checkmarx package manager, status (supported, fixed, remapped, versionless, unsupported, os-package, missing, malformed), rule IDs, reason. Only for profiles with a `purl:` section |
 
 ## Exit codes
 
@@ -77,16 +91,19 @@ For `out/<name>.<profile>.*`:
 | 4 | Quality gate failed (profile `quality.audit: gate`) |
 | 5 | Checkmarx verification failed |
 | 6 | Bisect inconclusive |
+| 7 | Fixed, but no component has a purl type the profile supports; Checkmarx would fail the scan ("no valid PURLs"), so do not upload |
 
 ## Profiles
 
-Built in: `checkmarx` and `compliance` (`sbom_fixer/data/profiles/`). Pass a YAML path to use your own.
+Built in: `checkmarx` (web portal), `checkmarx-cli` (cx CLI, CycloneDX up to 1.6) and `compliance` (`sbom_fixer/data/profiles/`). Pass a YAML path to use your own.
 
 ```yaml
 name: checkmarx
 cyclonedx:
   floor: "1.3"                              # lowest version the descent may reach ("declared" = never downgrade)
-  accepted_versions: ["1.3", "1.4", "1.5"]  # PROVISIONAL until docs/checkmarx-matrix.md is filled in
+  accepted_versions: ["1.3", "1.4", "1.5", "1.6", "1.7"]  # 1.7 PROVISIONAL until docs/checkmarx-matrix.md is filled in
+  max_version: "1.7"                        # newer declared versions (1.8+) are brought down to this one
+  future_versions: downgrade                # downgrade | reject (default reject)
 spdx:
   floor: "2.2"
   accepted_versions: ["2.2", "2.3"]
@@ -94,6 +111,15 @@ acceptance: profile        # profile | checkmarx | schema-only
 tools_form: as-is          # legacy-array if Checkmarx only reads the 1.4 tools array
 flatten_nested_components: true
 require_purl: warn         # fail -> exit 2 when a component has no valid purl
+ensure_tools: true         # add sbom-fixer to metadata.tools / SPDX creators when no tool is named
+purl:                      # consumer purl types; enables CXP-* rules, coverage CSV and exit 7
+  supported_types: {NPM: [npm, yarn, bower], Maven: [maven, sbt, ivy, gradle]}   # see checkmarx.yaml for the full list
+  os_types: [rpm, apk, alpm]
+  remap: true              # CXP-010..013
+  unsupported_action: keep # keep | remove (remove = DATA_LOSS)
+  os_package_action: keep  # keep | remove
+  strip_url_qualifiers: true
+  min_supported: 1         # fewer supported components -> exit 7
 allow_data_loss: true
 quality: {audit: report, fail_on_regression: true, min_score: 0, score_tolerance: 0.2}
 ```
@@ -112,17 +138,18 @@ Only needed for `verify`, `bisect`, `--verify` and `--verify-each-step`. The `cx
 | `SBOM_FIXER_CX_PROJECT` | Verification project (default `sbom-fixer-verification`) |
 | `SBOM_FIXER_CX_SCAN_ARGS`, `SBOM_FIXER_CX_RESULTS_ARGS` | Override the `cx` argument templates if your CLI version uses other flags (check `cx scan create --help`) |
 | `SBOM_FIXER_CX_TIMEOUT_S` | Scan timeout (default 900) |
-| `SBOMQS_BIN` | Path to `sbomqs` if not on PATH |
+| `SBOMQS_BIN` | Path to a `sbomqs` executable; overrides the copy in `tools/sbomqs` and PATH |
 | `SBOM_FIXER_FAST_VALIDATION=0` | Disable the fastjsonschema pre-check (use only for debugging) |
 
 ## Development
 
 ```bash
 python tools/make_corpus.py          # regenerate corpus/ and corpus/expected.yaml
-.venv/Scripts/pytest                 # 124 tests, about 10 seconds
+.venv/Scripts/pytest                 # 248 tests, about 30 seconds
 .venv/Scripts/ruff check sbom_fixer tests tools
 .venv/Scripts/mypy sbom_fixer
 python tools/vendor_schemas.py       # only when upgrading schemas; commit with schemas/SOURCES.md
+python tools/vendor_sbomqs.py 2.1.2  # only when upgrading sbomqs; also set ARG SBOMQS_VERSION in the Dockerfile
 ```
 
 Adding a rule follows the seven-step recipe in the Implementation Plan (evidence, classify, fixture, implement, describe, run everything, catalog). `docs/rule-catalog.md` is generated with `sbom-fixer rules --markdown`.

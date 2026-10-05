@@ -7,7 +7,7 @@ Installation, daily use and rule reference for `sbom-fixer` 1.0.0. Follow the st
 | Tool | `sbom-fixer` 1.0.0 (Python command-line tool) |
 | What it does | Repairs SBOMs at their declared version, steps down one version only when needed, and explains every change |
 | Works on | Windows 10/11, Linux, macOS, or any machine with Docker |
-| Needs | Python 3.11 or newer (3.12 recommended); internet only for installing packages |
+| Needs | Python 3.11 or newer (3.12 recommended); internet only for installing packages. sbomqs is in the repository (`tools\sbomqs`), nothing to download for the quality score |
 | Source folder | `sbom-fixer` (README.md, CHANGELOG.md, docs/ inside it) |
 
 ---
@@ -23,15 +23,15 @@ Checkmarx rejects many SBOMs without a clear error. The cause is almost always a
 | Case | What is wrong | What the tool does |
 |---|---|---|
 | A. Same-version error | The file is invalid against the version it declares (wrong case, null values, bad dates, broken licenses) | Repairs it at the same version |
-| B. Unsupported version | The file is valid, but Checkmarx does not import that version (for example CycloneDX 1.6) | Steps down one version at a time until a version is accepted |
-| C. Importer needs | The file is valid and supported but still fails or imports nothing (no purls, duplicate refs, UTF-16) | Applies Checkmarx-specific clean-ups |
+| B. Unsupported version | The file is valid, but the consumer does not read that version (for example CycloneDX 1.8, or 1.7 for the cx CLI) | Steps down one version at a time until a version is accepted |
+| C. Importer needs | The file is valid and supported but still fails or imports nothing (no purls, purl types Checkmarx does not scan, duplicate refs, UTF-16) | Applies Checkmarx-specific clean-ups and reports every component Checkmarx will skip |
 
 For every SBOM the tool runs this loop:
 
 1. Start at the version the SBOM declares.
 2. Repair what can be repaired, remove fields the schema does not allow, and apply the clean-ups.
 3. If the file is now valid and the version is accepted, stop. The version does not change.
-4. If not, go one version lower (for example 1.6 to 1.5), convert the fields that changed between those versions, and go back to step 2.
+4. If not, go one version lower (for example 1.7 to 1.6), convert the fields that changed between those versions, and go back to step 2.
 5. If even the lowest allowed version (the floor) is not OK, stop with exit code 2 and report every attempt.
 
 Every change is recorded with a rule ID. The diff, the notes file and the change log are all generated from that record.
@@ -52,7 +52,7 @@ Open a terminal and run the checks below.
 | Git (only to clone the repository) | `git --version` | A git version is printed |
 | Docker (optional, Step 06) | `docker --version` | A docker version is printed |
 | Checkmarx `cx` CLI (optional, Step 12) | `cx version` | A cx version is printed |
-| sbomqs (optional, Step 13) | `sbomqs version` | A sbomqs version is printed |
+| sbomqs (bundled, Step 13) | `tools\sbomqs\windows-amd64\sbomqs.exe version` | `GitVersion: v2.1.2` |
 
 If Python is missing on Windows:
 
@@ -82,7 +82,7 @@ cd sbom-fixer
 
 > **Do not copy .venv:** A virtual environment contains absolute paths of the machine it was created on and does not work on another machine. Always create a new one (Step 04).
 
-After this step the folder must contain at least: `pyproject.toml`, `README.md`, `sbom_fixer\`, `sbom_fixer\data\schemas\`, `sbom_fixer\data\profiles\`.
+After this step the folder must contain at least: `pyproject.toml`, `README.md`, `sbom_fixer\`, `sbom_fixer\data\schemas\`, `sbom_fixer\data\profiles\`, and `tools\sbomqs\` for the offline quality score. When you copy the folder as a zip (Option B), keep the `tools` folder.
 
 ---
 
@@ -153,6 +153,8 @@ python -m venv .venv
 pip install --no-index --find-links wheelhouse sbom-fixer
 ```
 
+The quality score needs no extra download on the offline machine: sbomqs is already in `tools\sbomqs\windows-amd64\sbomqs.exe` and sbom-fixer finds it automatically (Step 13).
+
 ### 4.7 Make the command available everywhere (optional)
 
 To use `sbom-fixer` from any folder without activating, add `C:\Tools\sbom-fixer\.venv\Scripts` to the user PATH (Windows Settings, search "Edit environment variables for your account", edit `Path`, add the folder), then open a new terminal.
@@ -194,7 +196,7 @@ In Windows cmd, use `%cd%` instead of `$PWD`:
 docker run --rm -v "%cd%:/work" -w /work sbom-fixer:1.0.0 fix sbom.json --out out
 ```
 
-The image also contains `sbomqs` for the quality score. Confirm the sbomqs download URL in the `Dockerfile` for the version you pin before the first build.
+The image also contains sbomqs 2.1.2 for the quality score. The build does not download it: it copies the Linux archive from `tools\sbomqs\linux-amd64\`, checks it against `tools\sbomqs\SHA256SUMS` and extracts it to `/usr/local/bin/sbomqs`. Keep `ARG SBOMQS_VERSION` in the `Dockerfile` equal to `tools\sbomqs\VERSION` (a test checks this).
 
 ---
 
@@ -224,7 +226,7 @@ Expected: a list of rules starting with `CDX14-001`.
 sbom-fixer fix examples\demo-broken.cdx.json --out examples\out
 ```
 
-Expected: `level 1.6 : not accepted`, `level 1.5 : ACCEPTED`, `exit code : 1`, and six files in `examples\out`.
+Expected: `level 1.6 : ACCEPTED`, `exit code : 1`, and seven files in `examples\out` (the six reports plus `demo-broken.checkmarx.purl-coverage.csv`). CycloneDX 1.6 is kept at 1.6 by the checkmarx profile.
 
 **Check 4 - (Developers only) Run the tests:**
 
@@ -232,7 +234,15 @@ Expected: `level 1.6 : not accepted`, `level 1.5 : ACCEPTED`, `exit code : 1`, a
 pytest
 ```
 
-Expected: `124 passed`.
+Expected: `248 passed`.
+
+**Check 5 - The quality score works offline:**
+
+```cmd
+sbom-fixer audit corpus\minimal\min-cdx-1.6.json
+```
+
+Expected: the last two lines are `sbomqs score: 5.11 (grade D)` and `sbomqs binary: ...\tools\sbomqs\windows-amd64\sbomqs.exe`. If the score shows n/a, see Step 13.6.
 
 If all checks pass, the installation is complete.
 
@@ -294,7 +304,9 @@ Open `build\sbom-fixed\sbom.checkmarx.notes.txt`. Step 09 explains every section
 
 ### 8.6 Upload to Checkmarx
 
-Upload `build\sbom-fixed\sbom.checkmarx.cdx.json`, never the original. Use the portal, or the `cx` CLI with the SBOM flag your CLI version documents (`cx scan create --help`).
+Upload `build\sbom-fixed\sbom.checkmarx.cdx.json`, never the original, through the portal. For an upload with the cx CLI (Jenkins, GitHub Action), fix with `-p checkmarx-cli` and upload `sbom.checkmarx-cli.cdx.json`, because the CLI reads CycloneDX only up to 1.6. Use the SBOM flag your CLI version documents (`cx scan create --help`).
+
+Exit code 7 means the file is fixed but has no component with a purl type Checkmarx supports; Checkmarx would fail the scan, so do not upload it (Step 10).
 
 ### 8.7 Keep the original
 
@@ -313,7 +325,8 @@ For an input `sbom.json` and profile `checkmarx`, the output folder contains:
 | `sbom.checkmarx.diff.txt` | Human-readable diff, original vs fixed | Reviewers |
 | `sbom.checkmarx.diff.patch.json` | RFC 6902 JSON Patch, original to fixed | Tools and audits |
 | `sbom.checkmarx.changes.json` | Every change: rule ID, path, before, after, severity, version level | Tools and audits |
-| `sbom.checkmarx.quality.json` | NTIA coverage and sbomqs score before and after | Compliance |
+| `sbom.checkmarx.quality.json` | NTIA coverage and sbomqs score (0-10) before and after | Compliance |
+| `sbom.checkmarx.purl-coverage.csv` | One row per component: original and final purl, Checkmarx package manager, status, rule IDs, reason | SBOM owner; compare with the Checkmarx package count |
 
 The notes file has these sections:
 
@@ -323,10 +336,10 @@ The notes file has these sections:
 | 1. Why the original failed | Encoding problems, rejected version, and the schema errors grouped by cause |
 | 2. Changes made | Every rule that changed something, its severity, count and example paths |
 | 3. Data loss | Information that could not be kept at the accepted version |
-| 4. Scan coverage | Components in total, with a valid purl (scannable), without purl |
+| 4. Scan coverage | Components in total and how many Checkmarx will scan, by status and by purl type, the score before the fix, and the expected package count in the Checkmarx results |
 | 5. Recommended source fix | The cheapest permanent fixes, often one generator option |
-| 6. Components without purl | The exact components Checkmarx will not scan |
-| 7. Quality and compliance | NTIA minimum elements and sbomqs score, before and after |
+| 6. Components Checkmarx will skip | Every component Checkmarx will not scan, with the reason. The compliance profile shows the components without purl instead |
+| 7. Quality and compliance | NTIA minimum elements and the sbomqs score, before and after (n/a when sbomqs cannot read the original, for example a broken or CycloneDX 1.8 file) |
 | 8. Findings not changed | Things the tool noticed but did not change (no guessing) |
 | 9. Checkmarx verification | Only when `--verify` was used |
 
@@ -351,16 +364,18 @@ Change severities:
 | 4 | Quality gate failed | Fix NTIA gaps (supplier, author) at the source |
 | 5 | Checkmarx verification failed | Read section 9 of the notes; run `sbom-fixer bisect` |
 | 6 | Bisect could not narrow the problem | Increase `--max-uploads` or send the file to the platform team |
+| 7 | Fixed, but no component has a purl type Checkmarx supports | Do not upload: Checkmarx would fail the scan ('no valid PURLs'). Read sections 4 and 6 of the notes and regenerate the SBOM with ecosystem purls |
 
 ---
 
 ## Step 11 – Profiles and configuration
 
-A profile says what the consumer accepts. Two are built in:
+A profile says what the consumer accepts. Three are built in:
 
 | Profile | Use | Behaviour |
 |---|---|---|
-| `checkmarx` | File to upload to Checkmarx | Steps down until an accepted version (provisional list 1.3, 1.4, 1.5) |
+| `checkmarx` | File to upload to Checkmarx through the portal | Keeps CycloneDX 1.3-1.7 at their own version (1.7 provisional); brings 1.8 and newer down to 1.7; Checkmarx purl rules, coverage CSV and exit 7 |
+| `checkmarx-cli` | File to upload with the cx CLI (Jenkins) | Same as checkmarx, but CycloneDX 1.7 goes down to 1.6 |
 | `compliance` | File for customers and auditors | Repairs and cleans, never downgrades (`floor: declared`) |
 
 The built-in files are in `sbom_fixer\data\profiles\`. To change behaviour, copy one, edit it and pass its path:
@@ -376,6 +391,13 @@ Profile keys:
 |---|---|---|
 | `cyclonedx.accepted_versions` | list, for example `["1.4", "1.5"]` | Versions the consumer accepts |
 | `cyclonedx.floor` | a version or `declared` | Lowest version the tool may step down to |
+| `cyclonedx.max_version` | a version, for example `"1.7"` | Newer declared versions (1.8, 1.9, ...) are brought down to this one |
+| `cyclonedx.future_versions` | `downgrade` / `reject` | reject (default) gives exit 2 for a version newer than the tool knows |
+| `ensure_tools` | `true` / `false` | Add sbom-fixer to metadata.tools (SPDX: creators) when the SBOM names no tool |
+| `purl.supported_types` | package manager: list of purl types | The purl types the consumer scans; enables the CXP rules |
+| `purl.remap`, `purl.strip_url_qualifiers` | `true` / `false` | Remap unsupported types on evidence; remove URL qualifiers |
+| `purl.unsupported_action`, `purl.os_package_action` | `keep` / `remove` | What to do with components Checkmarx skips |
+| `purl.min_supported` | number (default 1) | Fewer supported components give exit 7 |
 | `spdx.accepted_versions`, `spdx.floor` | same for SPDX | Same for SPDX files |
 | `acceptance` | `profile`, `checkmarx`, `schema-only` | How "accepted" is decided (list, real upload, or schema only) |
 | `tools_form` | `as-is`, `legacy-array` | Write `metadata.tools` in the 1.4 array form even at 1.5 |
@@ -393,9 +415,9 @@ One-off override without editing a profile:
 sbom-fixer fix build\sbom.json --accepted 1.4,1.5 --out build\sbom-fixed
 ```
 
-> **Provisional values:** The accepted versions in the `checkmarx` profile are an assumption until someone uploads the files in `corpus\minimal\` to your Checkmarx tenant and fills in `docs\checkmarx-matrix.md`. Do this once per tenant and update the profile.
+> **Provisional value:** CycloneDX 1.7 in the `checkmarx` profile is an assumption: the Checkmarx Scanning SBOMs page lists 1.0-1.6, another Checkmarx page says the portal reads 1.7. Upload the files in `corpus\minimal\` to your tenant once, fill in `docs\checkmarx-matrix.md`, and remove 1.7 from the profile if the portal rejects it.
 
-Individual rules cannot be switched on or off by name. Profile keys control the rules that depend on them (`tools_form`, `flatten_nested_components`, `provenance`).
+Individual rules cannot be switched on or off by name. Profile keys control the rules that depend on them (`tools_form`, `flatten_nested_components`, `provenance`, `ensure_tools`, the `purl` section).
 
 ---
 
@@ -439,12 +461,83 @@ sbom-fixer audit build\sbom.json
 
 This prints NTIA minimum elements coverage: supplier, component name, version, unique identifier, dependencies, SBOM author and timestamp. `--json` prints the same as JSON.
 
-For the sbomqs score, install sbomqs (it is already in the Docker image) and either put it on PATH or set `SBOMQS_BIN` to its full path. Without sbomqs the audit still runs and shows the score as "n/a".
+Fixes and audits also print the sbomqs score (0 to 10, with a grade A to F). sbomqs is in the repository, so this works offline with nothing to install (13.1).
 
 The two gaps seen most often are supplier name and SBOM author. Fix both at the source:
 
 - **Author:** set `metadata.authors` to your team or organisation in the pipeline.
 - **Supplier:** use a generator that reads package metadata.
+
+### 13.1 sbomqs is bundled in the repository
+
+The folder `tools\sbomqs\` holds sbomqs 2.1.2 by Interlynk (Apache-2.0 licence, `tools\sbomqs\LICENSE`):
+
+| File | Content |
+|---|---|
+| `windows-amd64\sbomqs.exe` | Windows x64 binary, runs as is |
+| `linux-amd64\sbomqs_2.1.2_Linux_x86_64.tar.gz` | Linux x64 release archive (extract once, see 13.4; Docker extracts it) |
+| `VERSION` | Pinned version, 2.1.2 |
+| `checksums.txt` | Checksums of the release archives, as published by Interlynk |
+| `SHA256SUMS` | sha256 of every file in the folder (checked by the tests and the Docker build) |
+| `README.md` | The same instructions in short |
+
+sbomqs scores the file locally and does not need the network. This was tested with every proxy pointed at a closed port (`tests\test_sbomqs_vendored.py`).
+
+### 13.2 How sbom-fixer finds sbomqs
+
+| Order | Source | When it is used |
+|---|---|---|
+| 1 | `SBOMQS_BIN` | The environment variable is set to the full path of a sbomqs executable |
+| 2 | `tools\sbomqs\` in the repository | Windows x64: `windows-amd64\sbomqs.exe`. Linux x64: `linux-amd64/sbomqs` after extracting the archive |
+| 3 | `sbomqs` on `PATH` | For example `/usr/local/bin/sbomqs` in the Docker image |
+
+`sbom-fixer audit <file>` shows which one is used in its last line, `sbomqs binary: <path>`. Without any of them the audit still runs and the score shows n/a.
+
+### 13.3 Where the score appears
+
+- `sbom-fixer audit <file>`: `sbomqs score: 5.11 (grade D)`; with `--json` also the grade and the binary path.
+- Notes section 7 and `quality.json`: the score of the original and of the fixed file.
+- Quality gate (`quality.audit: gate`): `quality.min_score` and `quality.score_tolerance` turn a low or dropping score into exit 4.
+
+The original shows n/a when sbomqs cannot read it, for example a broken file (`no valid SBOM files processed`), a UTF-16 file or CycloneDX 1.8. The fixed file then still gets a score; this is expected.
+
+### 13.4 Use sbomqs directly
+
+Windows (cmd or PowerShell, from the repository folder):
+
+```cmd
+tools\sbomqs\windows-amd64\sbomqs.exe version
+tools\sbomqs\windows-amd64\sbomqs.exe score build\sbom.json
+tools\sbomqs\windows-amd64\sbomqs.exe score build\sbom.json --json
+```
+
+The plain `score` output also shows the scores for industry profiles (Interlynk, NTIA, BSI TR-03183-2, OpenChain Telco) and a breakdown by category.
+
+Linux x64 - extract once next to the archive; sbom-fixer then finds it automatically:
+
+```bash
+tar -xzf tools/sbomqs/linux-amd64/sbomqs_2.1.2_Linux_x86_64.tar.gz -C tools/sbomqs/linux-amd64 sbomqs
+tools/sbomqs/linux-amd64/sbomqs score build/sbom.json
+```
+
+macOS and ARM machines: install sbomqs from github.com/interlynk-io/sbomqs/releases and set `SBOMQS_BIN`.
+
+### 13.5 Check that the bundled copy is genuine
+
+```cmd
+cd tools\sbomqs
+certutil -hashfile windows-amd64\sbomqs.exe SHA256
+```
+
+The hash must be the one on the `windows-amd64/sbomqs.exe` line of `SHA256SUMS`. In Git Bash or Linux: `cd tools/sbomqs && sha256sum -c SHA256SUMS`. The repository's `.gitattributes` stops Git from changing line endings in this folder, so the check also passes on Windows.
+
+### 13.6 When the score shows n/a
+
+| Cause | Fix |
+|---|---|
+| sbomqs not found (not Windows x64, Linux archive not extracted, or the tools folder was not copied) | Run `sbom-fixer audit <file>` to see the error; extract the Linux archive (13.4), copy `tools\sbomqs\`, or set `SBOMQS_BIN` |
+| sbomqs cannot read the original | Normal for broken, UTF-16 or CycloneDX 1.8 files; the fixed file has a score |
+| Windows or the antivirus blocks `sbomqs.exe` | Unblock it once: `Unblock-File tools\sbomqs\windows-amd64\sbomqs.exe` in PowerShell; ask IT to allow the file, using its sha256 from `SHA256SUMS` |
 
 ---
 
@@ -452,8 +545,8 @@ The two gaps seen most often are supplier name and SBOM author. Fix both at the 
 
 Copy the stage from `jenkins\sbom-fix-stage.groovy` into the service Jenkinsfile, right after the SBOM is generated. It:
 
-1. Runs `fix` with the `checkmarx` and `compliance` profiles.
-2. Fails the build only for exit code 2 or higher.
+1. Runs `fix` with the `checkmarx-cli` and `compliance` profiles and uploads `sbom.checkmarx-cli.cdx.json` with the cx CLI (which reads CycloneDX up to 1.6). The quality score comes from the sbomqs in the Docker image.
+2. Fails the build only for exit code 2 or higher (7 = nothing Checkmarx can scan).
 3. Archives the original, the outputs, the diffs and the notes.
 
 The nightly job in `jenkins\nightly-corpus.groovy` uploads the whole sample corpus to the verification project, so you notice when Checkmarx changes what it accepts. The full rollout guide is `docs\rollout.md`.
@@ -468,7 +561,9 @@ The nightly job in `jenkins\nightly-corpus.groovy` uploads the whole sample corp
 |---|---|---|---|
 | `REP-` | A | At every version level | Repairs errors against the current version's schema |
 | `CDX17-`, `CDX16-`, `CDX15-`, `CDX14-`, `SPDX23-` | B | Once, when stepping down from that version | Converts fields that changed between two versions |
-| `SAN-` | C | At every version level (SAN-060 and SAN-090 once at the end) | Checkmarx clean-ups |
+| `SAN-` | C | At every version level (SAN-060 and SAN-090 once at the end) | Clean-ups for the importer (purl URLs, default tool, refs, licences, ...) |
+| `CXP-` | C | At every version level, only in profiles with a purl section | Checkmarx purl rules: keep supported types, repair their format, remap unsupported types on evidence, report the rest |
+| `CDX-FWD-` | B | Once, for a CycloneDX version newer than the tool knows (1.8+) | Generic step down to max_version |
 | `PRUNE-001` | – | At every version level | Removes a field the current schema does not allow (always DATA_LOSS) |
 | `ENC-001/002/003` | – | At the start | File was UTF-8 with BOM, UTF-16, or not UTF-8 |
 | `CDX-VER`, `SPDX-VER` | – | At each step down | The declared version was changed |
@@ -526,6 +621,9 @@ Online references: CycloneDX specification (github.com/CycloneDX/specification),
 | CDX17-001 | B | hop | 1.7 -> 1.6 | CycloneDX 1.7 component fields versionRange and isExternal do not exist in 1.6; they were kept as properties. |
 | CDX17-002 | B | hop | 1.7 -> 1.6 | CycloneDX 1.7 patent assertions, citations and metadata.distributionConstraints have no 1.6 equivalent and were removed. |
 | CDX17-ENUM | B | hop | 1.7 -> 1.6 | Enum values that exist only in CycloneDX 1.7 were mapped: new external reference types became 'other' (original kept in comment); Streebog hashes were removed. |
+| CDX-FWD-001 | B | hop |  | The SBOM declared a CycloneDX version newer than this tool knows (for example 1.8); specVersion was set to the profile's max_version and the document was checked against that schema (generic future hop). |
+| CDX-FWD-002 | B | hop |  | A field that the target CycloneDX version does not define was moved into a property sbom-fixer:cdxNN:<field> where the object allows properties; otherwise it was removed (DATA_LOSS). |
+| CDX-FWD-003 | B | hop |  | A value that the target CycloneDX version does not allow (a new enum value) became 'other' where the schema allows it, with the original value kept; otherwise the value was removed (DATA_LOSS). |
 | REP-001 | A | repair |  | $schema pointed to a different CycloneDX version than specVersion; $schema was corrected. |
 | REP-002 | A | repair |  | specVersion was written as a number; it must be a string such as "1.5". |
 | REP-003 | A | repair |  | A value was written in the wrong case or spelling (for example 'Library' or 'sha256'); it was mapped to the one allowed value it matches. |
@@ -542,9 +640,11 @@ Online references: CycloneDX specification (github.com/CycloneDX/specification),
 | SAN-002 | C | sanitize |  | Empty arrays and objects in optional fields were removed (dependsOn is kept, because an empty dependsOn means 'no dependencies'). |
 | SAN-003 | C | sanitize |  | The BOM had no serialNumber; a deterministic urn:uuid derived from the input was added. |
 | SAN-004 | C | sanitize |  | metadata.timestamp had a timezone offset; it was normalized to UTC 'Z' form. A missing timestamp is reported, never invented. |
+| SAN-009 | C | sanitize |  | The purl field held a web URL (https://...), which is not a purl. A registry URL was converted to the exact purl; any other URL was moved to externalReferences and the component reported as not scannable. |
 | SAN-010 | C | sanitize |  | A purl did not parse; characters were percent-encoded where that made it valid, otherwise the purl was removed and the component reported as not scannable. |
 | SAN-011 | C | sanitize |  | A component had no purl. One was built when the ecosystem was certain (bom-ref is a purl, or a generator property names the package type); otherwise the component is reported as not scannable. |
 | SAN-012 | C | sanitize |  | Components with purl types such as generic or github are kept but counted separately, because SCA scanners usually do not match them. |
+| SAN-013 | C | sanitize |  | The SBOM named no generating tool (CycloneDX metadata.tools, SPDX creationInfo creators 'Tool:'); sbom-fixer was added as the default tool, because some importers expect at least one. |
 | SAN-020 | C | sanitize |  | Several components shared one bom-ref; duplicates were renamed with a #2, #3 suffix (dependencies keep pointing to the first). |
 | SAN-021 | C | sanitize |  | Dependency entries referred to bom-refs that do not exist in the document; those edges were removed. |
 | SAN-022 | C | sanitize |  | Top-level components with an identical purl were merged into the first one; dependency references were rewritten to it. |
@@ -553,6 +653,19 @@ Online references: CycloneDX specification (github.com/CycloneDX/specification),
 | SAN-050 | C | sanitize |  | Nested components were moved to the top-level components list, which the profile requires. |
 | SAN-060 | C | final |  | The document carried a signature; any change invalidates it, so it was removed. Re-sign the output if signatures are required. |
 | SAN-090 | C | final |  | sbom-fixer was added to metadata.tools and metadata.properties record the source version and hash, so the output can be traced to its original. |
+| CXP-001 | C | sanitize |  | The purl type (or the 'pkg:' prefix) was not lower case; it was lower-cased as the purl specification requires. |
+| CXP-002 | C | sanitize |  | An npm scope was written as '@scope'; Checkmarx only matches the encoded form '%40scope', so '@' was percent-encoded. |
+| CXP-010 | C | sanitize |  | A Go module was identified as pkg:github (not scanned by Checkmarx); the generator marks it as a Go module, so it was rewritten to pkg:golang/github.com/... The original purl is kept in sbom-fixer:original-purl. |
+| CXP-011 | C | sanitize |  | A pkg:generic purl (not scanned by Checkmarx) belonged to a component whose generator property names the ecosystem; it was rebuilt as that ecosystem's purl from the component's name, group and version. |
+| CXP-012 | C | sanitize |  | A pkg:generic purl carried a download_url / repository_url / vcs_url on a known package registry (Maven Central, npm, PyPI, NuGet, RubyGems, Go proxy, pub.dev); it was rewritten to that registry's purl. |
+| CXP-013 | C | sanitize |  | The purl used a type that is not in the purl specification but has exactly one meaning (nodejs/node -> npm, dotnet/nupkg -> nuget, jar -> maven when a groupId is present); the type was replaced. |
+| CXP-003 | C | sanitize |  | A supported purl had no version, which makes Checkmarx check the latest version instead; the component's own version was added. Without any version the component is reported (results may not match the version in use). |
+| CXP-004 | C | sanitize |  | A Maven-family purl (maven, gradle, sbt, ivy) had no namespace (groupId), so Checkmarx cannot look it up; the component's group was used. Without a group the component is reported. |
+| CXP-005 | C | sanitize |  | A supported purl carried URL-valued qualifiers or subpath (for example repository_url=https://...). Checkmarx documents purls as pkg:type/[namespace/]name@version and matches by name and version, so they were removed; the original purl is kept in sbom-fixer:original-purl. |
+| CXP-020 | C | sanitize |  | The component's purl type is not in the Checkmarx supported list (for example cargo, hex, generic, docker, github); Checkmarx skips it silently. It is kept and listed (or removed when unsupported_action: remove). |
+| CXP-021 | C | sanitize |  | The component is an operating-system package (rpm, apk, alpm, or deb from a Linux distribution). Checkmarx does not scan OS packages and reads deb as a C++ (Conan) package, so results for it may be wrong. It is kept and listed (or removed when os_package_action: remove). |
+| CXP-030 | C | sanitize |  | The component has no purl, only a CPE, SWID or hash; Checkmarx skips such components silently. A purl is never derived from a CPE, because the mapping is not reliable. |
+| CXP-051 | C | sanitize |  | The SPDX document has no DESCRIBES or DEPENDS_ON relationship; Checkmarx then treats every package as a direct dependency. Relationships are never invented. |
 | SPDX23-001 | B | hop | 2.3 -> 2.2 | Package fields added in SPDX 2.3 (primaryPackagePurpose, releaseDate, builtDate, validUntilDate) were moved into the package comment. |
 | SPDX23-002 | B | hop | 2.3 -> 2.2 | Relationship types added in SPDX 2.3 (REQUIREMENT_DESCRIPTION_FOR, SPECIFICATION_FOR) became OTHER with the original type in the comment. |
 
@@ -572,7 +685,9 @@ Online references: CycloneDX specification (github.com/CycloneDX/specification),
 | Exit 2 with "below the floor" | Very old version such as 1.2 | Regenerate with a newer generator version |
 | Exit 2 with "schema errors remain" at every level | An error no rule can fix | Run `sbom-fixer check` and look at the grouped errors; report them to the platform team |
 | Output file looks unchanged but exit code is 1 | Only the encoding was fixed (BOM or UTF-16) | Nothing to do; the output is correct UTF-8 |
-| Quality score shows "n/a" | sbomqs not installed | Install sbomqs or set `SBOMQS_BIN` (Step 13) |
+| Quality score shows "n/a" | sbomqs not found, or it cannot read the original | See Step 13.6 |
+| Exit 7 | No component has a purl type Checkmarx supports | Do not upload; regenerate the SBOM with ecosystem purls (Step 10) |
+| `sha256sum -c SHA256SUMS` fails in `tools\sbomqs` | A file was changed, or line endings were converted by a copy without .gitattributes | `git checkout -- tools/sbomqs`, or `python tools\vendor_sbomqs.py 2.1.2` |
 | Checkmarx still rejects the fixed file | The importer needs something the schema does not require | Run `sbom-fixer bisect` (Step 12), then report the result so a rule can be added |
 | A large SBOM is slow | Very large files | About 4 seconds for 5,000 components and about 40 seconds for 50,000 on a laptop; normal |
 
@@ -597,10 +712,18 @@ Check `CHANGELOG.md`; any release that adds or changes rules can change outputs.
 1. `python tools\vendor_schemas.py` downloads the latest official schemas.
 2. `sbom-fixer schema-diff 1.7 1.8` shows what changed.
 3. Write the hop rules for the new version and add sample files to `corpus\`.
+4. Until the hop rules exist, the checkmarx profiles already bring the new version down to 1.7 with the generic future hop (rules CDX-FWD-001 to 003) and report every field they move or remove.
 
 ### 17.3 When Checkmarx supports a newer version
 
 Add the version to `accepted_versions` in the `checkmarx` profile. Files at that version then stop stepping down. No code change is needed.
+
+### 17.5 When a new sbomqs is released
+
+1. `python tools\vendor_sbomqs.py 2.2.0` (example version) downloads the release, checks it against the published checksums and replaces the files in `tools\sbomqs\`.
+2. Set `ARG SBOMQS_VERSION` in the `Dockerfile` to the same version.
+3. Run `pytest`. The score JSON can change between sbomqs releases; `sbom_fixer\audit\sbomqs.py` reads `sbom_quality_score` (2.x) and `avg_score` (1.x).
+4. Add a line to `CHANGELOG.md`. Scores can differ between sbomqs versions, so compare scores only from the same version.
 
 ### 17.4 Adding a new rule (developers)
 
@@ -626,6 +749,9 @@ Add the version to `accepted_versions` in the `checkmarx` profile. Files at that
 | Fix, two copies | `sbom-fixer fix sbom.json -p checkmarx -p compliance --out out` |
 | Fix with other accepted versions | `sbom-fixer fix sbom.json --accepted 1.4 --out out` |
 | Quality only | `sbom-fixer audit sbom.json` |
+| Fix for the cx CLI | `sbom-fixer fix sbom.json -p checkmarx-cli --out out` |
+| sbomqs score directly | `tools\sbomqs\windows-amd64\sbomqs.exe score sbom.json` |
+| Check the bundled sbomqs | `certutil -hashfile tools\sbomqs\windows-amd64\sbomqs.exe SHA256` |
 | Rule list | `sbom-fixer rules` |
 | Schema difference | `sbom-fixer schema-diff 1.5 1.6` |
 | Upload and verify | `sbom-fixer verify out\sbom.checkmarx.cdx.json` |

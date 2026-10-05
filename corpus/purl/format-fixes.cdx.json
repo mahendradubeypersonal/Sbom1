@@ -1,0 +1,95 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-02T10:00:00Z",
+    "authors": [
+      {
+        "name": "Platform Team"
+      }
+    ],
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "corpus-generator",
+          "version": "1.0"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "ref-@angular/core-15.2.0",
+      "type": "library",
+      "name": "@angular/core",
+      "version": "15.2.0",
+      "purl": "pkg:npm/@angular/core@15.2.0"
+    },
+    {
+      "bom-ref": "ref-lodash-4.17.21",
+      "type": "library",
+      "name": "lodash",
+      "version": "4.17.21",
+      "purl": "pkg:NPM/lodash@4.17.21"
+    },
+    {
+      "bom-ref": "ref-django-4.2.7",
+      "type": "library",
+      "name": "django",
+      "version": "4.2.7",
+      "purl": "pkg:pypi/django"
+    },
+    {
+      "bom-ref": "ref-commons-io-2.15.0",
+      "type": "library",
+      "name": "commons-io",
+      "version": "2.15.0",
+      "purl": "pkg:maven/commons-io@2.15.0",
+      "group": "commons-io"
+    },
+    {
+      "bom-ref": "ref-slf4j-api-2.0.9",
+      "type": "library",
+      "name": "slf4j-api",
+      "version": "2.0.9",
+      "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.9?repository_url=https://repo.example.com/maven2",
+      "group": "org.slf4j"
+    },
+    {
+      "bom-ref": "ref-no-version-anywhere-None",
+      "type": "library",
+      "name": "no-version-anywhere",
+      "purl": "pkg:npm/no-version-anywhere"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "ref-@angular/core-15.2.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-lodash-4.17.21",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-django-4.2.7",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-commons-io-2.15.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-slf4j-api-2.0.9",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-no-version-anywhere-None",
+      "dependsOn": []
+    }
+  ]
+}

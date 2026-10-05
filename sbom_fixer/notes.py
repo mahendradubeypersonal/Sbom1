@@ -26,7 +26,7 @@ def _fix_types(result: RunResult) -> str:
     path = result.descent.path if result.descent else []
     if len(path) > 1:
         cases.append(f"B (downgrade {path[0]} -> {path[-1]})")
-    if any(i.startswith("SAN-") and i != "SAN-090" for i in ids):
+    if any(i.startswith(("SAN-", "CXP-")) and i != "SAN-090" for i in ids):
         cases.append("C (importer-specific fixes)")
     return " + ".join(cases) if cases else "none (already compatible)"
 
@@ -94,6 +94,54 @@ def source_fixes(result: RunResult) -> list[str]:
     return out
 
 
+_STATUS_LABELS = {
+    "supported": "supported as-is", "fixed": "fixed (format, CXP-001..005)", "remapped": "remapped from unsupported type",
+    "versionless": "versionless (checked vs latest)", "unsupported": "unsupported purl type (CXP-020)",
+    "os-package": "OS package (CXP-021)", "missing": "no purl (CXP-030 / SAN-011)", "malformed": "malformed purl (SAN-010, npm @)",
+}
+
+
+def _checkmarx_sections(result: RunResult, w: Any) -> None:
+    from .purlmap import NOT_SCANNED, SCANNED
+
+    cov, before = result.coverage, result.coverage_before
+    assert cov is not None
+    pct = f"{100 * cov.scanned / cov.total:.1f}%" if cov.total else "n/a"
+    w("4. SCAN COVERAGE (Checkmarx)")
+    w(f"   Components in output                : {cov.total:,}")
+    w(f"   Scanned by Checkmarx                : {cov.scanned:,}   ({pct})")
+    counts = cov.by_status()
+    for st in SCANNED:
+        w(f"     {_STATUS_LABELS[st]:34}: {counts[st]:,}")
+    w(f"   NOT scanned by Checkmarx            : {cov.total - cov.scanned:,}" + ("  -> see section 6" if cov.total > cov.scanned else ""))
+    for st in NOT_SCANNED:
+        w(f"     {_STATUS_LABELS[st]:34}: {counts[st]:,}")
+    if before is not None:
+        w(f"   Scanned before the fix              : {before.scanned:,} of {before.total:,}")
+    w("   By purl type:")
+    w(f"     {'type':14}{'count':>7}  {'Checkmarx package manager':28}status")
+    for t, n, pm, statuses in cov.by_type():
+        w(f"     {t:14}{n:>7}  {pm:28}{statuses}")
+    w(f"   Expected package count in Checkmarx results: about {cov.scanned:,}")
+    w("   (Checkmarx does not show skipped components; compare this number with the package count of the scan.")
+    w("    Every component and its status is listed in the .purl-coverage.csv file.)")
+    w("")
+
+
+def _checkmarx_skipped(result: RunResult, w: Any) -> None:
+    cov = result.coverage
+    assert cov is not None
+    w("6. COMPONENTS CHECKMARX WILL SKIP")
+    skipped = [r for r in cov.rows if not r.scanned]
+    for r in skipped[:200]:
+        w(f"   {r.path:18} {(r.name + ' ' + r.version).strip()[:34]:34} {(r.final_purl or '-')[:60]:60} {r.reason}")
+    if len(skipped) > 200:
+        w(f"   ... {len(skipped) - 200} more (see the .purl-coverage.csv file)")
+    if not skipped:
+        w("   None.")
+    w("")
+
+
 def render(result: RunResult) -> str:
     L: list[str] = []
     w = L.append
@@ -123,6 +171,9 @@ def render(result: RunResult) -> str:
     if result.ok:
         w(f"Result          : {'UNCHANGED - already compatible' if result.exit_code == 0 else 'FIXED'} - output validates against "
           f"{'CycloneDX' if result.spec == 'cyclonedx' else 'SPDX'} {result.final_version}")
+        if result.exit_code == 7:
+            w("WARNING         : no component has a purl type Checkmarx supports; Checkmarx would fail the scan "
+              "('no valid PURLs'). Do not upload; see sections 4 and 6.")
         if result.outputs.get("sbom"):
             w(f"Output          : {result.outputs['sbom']}")
     else:
@@ -132,7 +183,18 @@ def render(result: RunResult) -> str:
 
     w("1. WHY THE ORIGINAL FAILED")
     if not result.original_issues and not any(c.rule_id.startswith("ENC-") for c in result.log.changes) and len(result.descent.path if result.descent else []) <= 1:
-        w("   The original was valid against its declared version and accepted.")
+        purl_problems = any(c.rule_id.startswith("CXP-") or c.rule_id in ("SAN-009", "SAN-013") for c in result.log.changes) or (
+            result.coverage_before is not None and result.coverage_before.scanned < result.coverage_before.total)
+        w("   The original was valid against its declared version" + (", but:" if purl_problems else " and accepted."))
+    if result.coverage is not None and result.coverage_before is not None:
+        before, after = result.coverage_before, result.coverage
+        if before.scanned < before.total:
+            w(f"   [purl]      Checkmarx would scan {before.scanned} of {before.total} components of the original "
+              f"(after the fix: {after.scanned} of {after.total}).")
+        for rule_id, changes in result.log.by_rule().items():
+            if rule_id.startswith("CXP-") or rule_id in ("SAN-009", "SAN-013"):
+                r = rule_by_id(rule_id)
+                w(f"   [{rule_id}] {len(changes):>4} x {r.title if r else rule_id}")
     for c in result.log.changes:
         if c.rule_id.startswith("ENC-"):
             w(f"   [{c.rule_id}]   {c.reason}")
@@ -170,6 +232,9 @@ def render(result: RunResult) -> str:
 
     doc = result.fixed_doc if result.fixed_doc is not None else result.original_doc
     total, ok, missing = scan_coverage(doc or {}, result.spec)
+    if result.coverage is not None:
+        _checkmarx_sections(result, w)
+        return _tail(result, L, w)
     w("4. SCAN COVERAGE")
     w(f"   Components in output        : {total:,}")
     w(f"   With valid purl (scannable) : {ok:,}")
@@ -192,6 +257,17 @@ def render(result: RunResult) -> str:
         w(f"   ... {len(missing) - 200} more")
     w("")
 
+    return _tail(result, L, w)
+
+
+def _tail(result: RunResult, L: list[str], w: Any) -> str:
+    """Sections 5, 7, 8 and 9, shared by both coverage layouts."""
+    if result.coverage is not None:
+        w("5. RECOMMENDED SOURCE FIX")
+        for f in source_fixes(result) or ["None needed."]:
+            w(f"   - {f}")
+        w("")
+        _checkmarx_skipped(result, w)
     if result.quality:
         q = result.quality
         w("7. QUALITY AND COMPLIANCE")

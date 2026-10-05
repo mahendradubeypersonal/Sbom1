@@ -2,6 +2,23 @@
 
 Rule changes change outputs, so every new or changed rule is at least a minor version bump (ADR-09).
 
+## Unreleased (next minor version)
+
+Checkmarx version policy and purl handling. Design and sources: `docs/checkmarx-version-purl-fix.md`.
+
+- **Versions:** profile `checkmarx` accepts CycloneDX 1.3-1.7 and repairs 1.6 and 1.7 at their own version (1.7 provisional: the Checkmarx "Scanning SBOMs" page lists 1.0-1.6). New profile `checkmarx-cli` caps at 1.6 for the `cx` CLI; the Jenkins stage uses it.
+- **Future versions:** new spec keys `max_version` and `future_versions` (`reject` default, `downgrade`). CycloneDX 1.8+ is brought down to `max_version` by a generic future hop; CycloneDX 2.x is refused (VER-002 in the reason).
+- **Rules added:**
+  - Future hop: CDX-FWD-001, CDX-FWD-002, CDX-FWD-003.
+  - Sanitizers: SAN-009 (purl written as a URL), SAN-013 (default tool when none is named, profile key `ensure_tools`).
+  - Checkmarx purl (profile section `purl:`): CXP-001, CXP-002, CXP-003, CXP-004, CXP-005, CXP-010, CXP-011, CXP-012, CXP-013, CXP-020, CXP-021, CXP-030, CXP-051.
+- **Changed:** SAN-012 runs only for profiles without a `purl:` section. SAN-090 no longer adds sbom-fixer to metadata.tools twice. The NTIA "Unique identifier" check counts a purl only when it parses.
+- **Outputs:** `<name>.<profile>.purl-coverage.csv`; `checkmarx_coverage` (before/after) in changes.json; notes sections 4 and 6 show Checkmarx coverage, coverage by purl type and the expected package count.
+- **Exit code 7:** no component has a purl type the profile supports (Checkmarx would fail the scan). `fix --verify` skips the upload then, and uses the supported-component count as the default `--expected-packages`.
+- **Corpus:** `corpus/future/` and `corpus/purl/` (9 new files); `expected.yaml` updated for the 1.6/1.7 policy.
+- **sbomqs offline:** sbomqs 2.1.2 vendored in `tools/sbomqs` (Windows x64 binary, Linux x64 archive, upstream `checksums.txt`, `SHA256SUMS`, Apache-2.0 `LICENSE`) by the new `tools/vendor_sbomqs.py`, which verifies the release checksums. Lookup order: `SBOMQS_BIN`, `tools/sbomqs`, `PATH`. The Dockerfile no longer downloads sbomqs (was 1.0.0 from GitHub); it extracts the vendored 2.1.2 archive after a sha256 check. `audit` prints the grade and the binary; sbomqs errors are shown without colour codes and timestamps. `.gitattributes` keeps `tools/sbomqs` byte-for-byte. New tests: `tests/test_sbomqs_vendored.py`.
+- **Docs:** `SBOM_Fixer_Rule_Book_And_Installation_guide.docx` (and `docs/SBOM_Fixer_Rule_Book.docx` / `.md`) updated: Step 13.1-13.6 on the bundled sbomqs, 17.5 upgrading sbomqs, and the 1.6/1.7 policy, `checkmarx-cli`, exit 7, purl coverage and the regenerated rule list.
+
 ## 1.0.0 - 2026-10-02
 
 First release. All eight phases of the implementation plan.

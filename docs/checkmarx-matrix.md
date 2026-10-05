@@ -33,3 +33,15 @@ To check a single level against the real importer instead of the profile list, r
 ```bash
 sbom-fixer fix file.json --verify-each-step --max-uploads 6
 ```
+
+## PURL checks (docs/checkmarx-version-purl-fix.md, section 8.3)
+
+Upload each file as it is, then the `sbom-fixer fix` output of it, and compare the package count Checkmarx shows with the "Expected package count" line in the notes.
+
+| File | What it proves | Packages, original | Packages, fixed | Expected (notes) | Scan ID | Notes |
+|---|---|---|---|---|---|---|
+| corpus/purl/mixed-types.cdx.json | Checkmarx type table: 14 supported aliases scanned, rpm/apk/deb(OS)/cargo/hex/docker/conda skipped | | (unchanged) | 14 | | |
+| corpus/purl/format-fixes.cdx.json | `@scope` unencoded (CXP-002) and `repository_url=https://` (CXP-005) are not matched before the fix, matched after | | | 6 | | |
+| corpus/purl/url-purls.cdx.json | purl written as https URL is skipped; SAN-009 output is matched | | | 2 (github and the unknown URL are skipped) | | |
+| corpus/purl/none-supported.cdx.json | Checkmarx fails with "no valid PURLs" (tool exit 7) | | – | 0 | | |
+| a real SBOM with `pkg:deb/debian/...` | What Checkmarx shows for OS deb packages (decides `os_package_action`) | | | | | |

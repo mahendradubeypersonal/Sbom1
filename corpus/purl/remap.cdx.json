@@ -1,0 +1,107 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-02T10:00:00Z",
+    "authors": [
+      {
+        "name": "Platform Team"
+      }
+    ],
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "corpus-generator",
+          "version": "1.0"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "ref-github.com/gorilla/handlers-v1.5.2",
+      "type": "library",
+      "name": "github.com/gorilla/handlers",
+      "version": "v1.5.2",
+      "purl": "pkg:github/gorilla/handlers@v1.5.2",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "go-module"
+        }
+      ]
+    },
+    {
+      "bom-ref": "ref-checkout-v4",
+      "type": "library",
+      "name": "checkout",
+      "version": "v4",
+      "purl": "pkg:github/actions/checkout@v4"
+    },
+    {
+      "bom-ref": "ref-jackson-databind-2.16.0",
+      "type": "library",
+      "name": "jackson-databind",
+      "version": "2.16.0",
+      "purl": "pkg:generic/jackson-databind@2.16.0",
+      "group": "com.fasterxml.jackson.core",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "java-archive"
+        }
+      ]
+    },
+    {
+      "bom-ref": "ref-flask-3.0.0",
+      "type": "library",
+      "name": "flask",
+      "version": "3.0.0",
+      "purl": "pkg:generic/flask@3.0.0?download_url=https://files.pythonhosted.org/packages/ab/cd/flask-3.0.0-py3-none-any.whl"
+    },
+    {
+      "bom-ref": "ref-internal-lib-1.0.0",
+      "type": "library",
+      "name": "internal-lib",
+      "version": "1.0.0",
+      "purl": "pkg:generic/internal-lib@1.0.0"
+    },
+    {
+      "bom-ref": "ref-express-4.18.2",
+      "type": "library",
+      "name": "express",
+      "version": "4.18.2",
+      "purl": "pkg:nodejs/express@4.18.2"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "ref-github.com/gorilla/handlers-v1.5.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-checkout-v4",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-jackson-databind-2.16.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-flask-3.0.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-internal-lib-1.0.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "ref-express-4.18.2",
+      "dependsOn": []
+    }
+  ]
+}

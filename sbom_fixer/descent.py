@@ -9,9 +9,10 @@ from .changes import INFO, ChangeLog
 from .oracle import Oracle
 from .profile import Profile
 from .prune import prune_to
-from .rules import Ctx, hop_rules, rules_of
+from .rules import Ctx, hop_rules, rule_by_id, rules_of
 from .rules.base import FINAL, REPAIR, SANITIZE, has_hop
-from .schemas import VERSION_ORDER, schema_url
+from .rules.cdx_future import FUTURE_RULES
+from .schemas import VERSION_ORDER, is_future, schema_url, version_key
 from .validate import Issue, validate
 
 MAX_PASSES = 3
@@ -83,19 +84,38 @@ def descend(doc: dict[str, Any], spec: str, declared: str, profile: Profile, ora
             source_sha256: str, initial_issues: list[Issue] | None = None) -> DescentResult:
     order = VERSION_ORDER[spec]
     result = DescentResult(final_version=None)
-    if declared not in order:
-        result.attempts.append(Attempt(declared, -1, False, f"{spec} {declared} has no vendored schema"))
-        return result
     rules = profile.rules_for(spec)
-    floor = rules.floor_for(declared)
-    if order.index(declared) < order.index(floor):
+    ctx = Ctx(log=log, spec=spec, version=declared, declared=declared, profile=profile, source_sha256=source_sha256)
+    ctx._doc = doc
+    start = declared
+    if declared not in order:
+        if not is_future(spec, declared):
+            reason = f"{spec} {declared} has no vendored schema"
+            key, newest = version_key(declared), version_key(order[-1])
+            if spec == "cyclonedx" and key and newest and key[0] != newest[0]:
+                reason += f" (VER-002: major version {key[0]} may change the document structure; not downgraded)"
+            result.attempts.append(Attempt(declared, -1, False, reason))
+            return result
+        if spec != "cyclonedx" or rules.future_versions != "downgrade" or not rules.max_version:
+            result.attempts.append(Attempt(declared, -1, False, f"{spec} {declared} is newer than the vendored schemas "
+                                                                f"and profile '{profile.name}' sets future_versions: reject"))
+            return result
+        start = rules.max_version
+        result.attempts.append(Attempt(declared, -1, False, f"{spec} {declared} is newer than this tool knows; "
+                                                            f"generic future hop to {start}"))
+        log.level = f"{declared}->{start}"
+        ctx.version = start
+        for rule_id in FUTURE_RULES:
+            rule = rule_by_id(rule_id)
+            if rule is not None:
+                rule.apply(doc, ctx)
+    floor = rules.floor_for(start)
+    if order.index(start) < order.index(floor):
         result.attempts.append(Attempt(declared, -1, False,
                                        f"declared {declared} is below the floor {floor}; it needs an upgrade hop, which is not supported"))
         return result
 
-    ctx = Ctx(log=log, spec=spec, version=declared, declared=declared, profile=profile, source_sha256=source_sha256)
-    ctx._doc = doc
-    version = declared
+    version = start
     first: list[Issue] | None = initial_issues
     while True:
         log.level = version

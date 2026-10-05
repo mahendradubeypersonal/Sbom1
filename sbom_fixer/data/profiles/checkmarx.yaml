@@ -1,21 +1,48 @@
-# What Checkmarx One SCA can import.
-# accepted_versions and floor are PROVISIONAL (ADR-01): replace them with the result of the
-# upload matrix in docs/checkmarx-matrix.md (SBOMFIX-102) before relying on them.
+# What Checkmarx One SCA can import through the web portal.
+# Source: Checkmarx One "Scanning SBOMs" (docs.checkmarx.com/en/34965-728599-scanning-sboms.html, read 2026-10-05)
+# and the SBOM Reports page (portal CycloneDX 1.7, CLI 1.6).
+# 1.7 is PROVISIONAL: the Scanning SBOMs page lists CycloneDX 1.0-1.6 only. Confirm with the upload matrix
+# in docs/checkmarx-matrix.md; if the portal rejects 1.7, remove it here (or use profile checkmarx-cli).
 name: checkmarx
-description: Checkmarx One SCA import copy
+description: Checkmarx One SCA import copy (web portal)
 cyclonedx:
   floor: "1.3"
-  accepted_versions: ["1.3", "1.4", "1.5"]
+  accepted_versions: ["1.3", "1.4", "1.5", "1.6", "1.7"]   # repaired at the declared version, never changed
+  max_version: "1.7"            # a newer declared version (1.8, 1.9, ...) is brought down to this one
+  future_versions: downgrade    # downgrade | reject
 spdx:
   floor: "2.2"
   accepted_versions: ["2.2", "2.3"]
 acceptance: profile          # profile | checkmarx (real upload per level) | schema-only
 tools_form: as-is            # as-is | legacy-array (use legacy-array if Checkmarx only reads the 1.4 array form)
+ensure_tools: true           # add sbom-fixer to metadata.tools (SPDX: creators) when the SBOM names no tool
 flatten_nested_components: true
 require_purl: warn           # warn | fail
 allow_data_loss: true        # false -> exit 3 when any DATA_LOSS change happens
 max_size_mb: 50
 provenance: true
+purl:
+  # Checkmarx "Scanning SBOMs" > Supported PURL Types (matching is case-insensitive).
+  # Components with any other type are skipped silently by Checkmarx.
+  supported_types:
+    NPM: [npm, yarn, bower]
+    Python (Pip): [pip, python, pypi, poetry]
+    NuGet: [nuget]
+    Maven: [maven, sbt, ivy, gradle]
+    PHP (Composer): [php, composer]
+    Swift / iOS: [ios, swift, swiftpm, carthage, cocoapods]
+    Go: [go, golang, gomodules]
+    C++ (Conan): [conan, cpp, deb]
+    Ruby (RubyGems): [gem, ruby, rubygems]
+    Unity: [unity]
+    Perl (CPAN): [perl, cpan]
+    Dart (Pub): [dart, pub]
+  os_types: [rpm, apk, alpm]   # OS packages; deb from a Linux distro is detected separately (CXP-021)
+  remap: true                  # CXP-010..013: change an unsupported type only on hard evidence
+  unsupported_action: keep     # keep | remove (remove = DATA_LOSS)
+  os_package_action: keep      # keep | remove (remove = DATA_LOSS)
+  strip_url_qualifiers: true   # CXP-005: Checkmarx documents pkg:type/[namespace/]name@version only
+  min_supported: 1             # fewer components with a supported purl -> exit 7 (Checkmarx would fail the scan)
 quality:
   audit: report              # never gate the scanner copy on quality (ADR-15)
   fail_on_regression: true

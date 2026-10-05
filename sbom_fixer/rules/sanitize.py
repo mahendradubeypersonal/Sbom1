@@ -12,6 +12,7 @@ from .. import __version__
 from ..changes import INFO, WARN
 from ..jsonutil import iter_components
 from ..licenses import canonical_id, looks_like_expression, normalize_expression, spdx_ids
+from ..purlmap import URL_RE, purl_from_url, slots
 from .base import FINAL, SANITIZE, Ctx, Rule, register
 from .repair import format_utc, parse_datetime
 
@@ -111,6 +112,41 @@ def _try_purl(text: str) -> PackageURL | None:
         return None
 
 
+_VCS_HOSTS = ("github.com", "gitlab.com", "bitbucket.org")
+
+
+@register
+class PurlIsUrl(Rule):
+    id = "SAN-009"
+    title = "purl written as a URL"
+    description = ("The purl field held a web URL (https://...), which is not a purl. A registry URL was converted to the exact "
+                   "purl; any other URL was moved to externalReferences and the component reported as not scannable.")
+    source_fix = "Write a package URL (pkg:type/namespace/name@version) in the purl field; put web links in externalReferences."
+    case, kind, specs = "C", SANITIZE, ("cyclonedx", "spdx")
+
+    def apply(self, doc: Any, ctx: Ctx) -> None:
+        for slot in slots(doc, ctx.spec):
+            url = slot.purl
+            if url is None or not URL_RE.match(url.strip()):
+                continue
+            new = purl_from_url(url, slot.version)
+            if new is not None:
+                text = new.to_string()
+                slot.set_purl(text)
+                ctx.log.add(self.id, slot.purl_path, "replaced", url, text, INFO, "Registry URL converted to its purl")
+            elif ctx.spec == "cyclonedx":
+                c = slot.package
+                c.pop("purl")
+                kind = "vcs" if any(h in url.lower() for h in _VCS_HOSTS) else "distribution"
+                refs = c.setdefault("externalReferences", [])
+                if not any(isinstance(r, dict) and r.get("url") == url for r in refs):
+                    refs.append({"type": kind, "url": url})
+                ctx.log.add(self.id, slot.purl_path, "moved", url, f"{slot.path}/externalReferences ({kind})", WARN,
+                            "URL is not a purl; moved to externalReferences, component will not be scanned")
+            else:
+                ctx.log.note(self.id, slot.purl_path, f"purl '{url}' is a URL, not a purl; package will not be scanned")
+
+
 @register
 class PurlParse(Rule):
     id = "SAN-010"
@@ -196,10 +232,63 @@ class PurlTypesNotScanned(Rule):
     case, kind = "C", SANITIZE
 
     def apply(self, doc: Any, ctx: Ctx) -> None:
+        if ctx.profile.purl is not None:
+            return  # the profile lists the consumer's purl types; CXP-020/021 report them instead
         for path, c in iter_components(doc):
             p = _try_purl(c["purl"]) if isinstance(c.get("purl"), str) else None
             if p is not None and p.type in _UNSCANNED_TYPES:
                 ctx.log.note(self.id, path, f"purl type '{p.type}' is usually not matched by SCA scanners", INFO)
+
+
+def _tool_entry(ctx: Ctx) -> tuple[Any, str]:
+    """metadata.tools in the form the current version (and profile) expects, plus a short description."""
+    if _version_at_least(ctx.version, "1.5") and ctx.profile.tools_form != "legacy-array":
+        return {"components": [{"type": "application", "name": "sbom-fixer", "version": __version__}]}, "object form"
+    return [{"vendor": "sbom-fixer", "name": "sbom-fixer", "version": __version__}], "array form"
+
+
+def _has_tool(tools: Any) -> bool:
+    if isinstance(tools, dict):
+        return bool(tools.get("components") or tools.get("services"))
+    return isinstance(tools, list) and bool(tools)
+
+
+@register
+class ToolsMissing(Rule):
+    id = "SAN-013"
+    title = "Add a default tool when none is named"
+    description = ("The SBOM named no generating tool (CycloneDX metadata.tools, SPDX creationInfo creators 'Tool:'); "
+                   "sbom-fixer was added as the default tool, because some importers expect at least one.")
+    source_fix = "Let the generator record itself in metadata.tools (CycloneDX) or creationInfo.creators (SPDX)."
+    case, kind, specs = "C", SANITIZE, ("cyclonedx", "spdx")
+
+    def apply(self, doc: Any, ctx: Ctx) -> None:
+        if not ctx.profile.ensure_tools:
+            return
+        if ctx.spec == "spdx":
+            info = doc.get("creationInfo")
+            if not isinstance(info, dict):
+                return
+            creators = info.get("creators")
+            if isinstance(creators, list) and any(isinstance(c, str) and c.startswith("Tool:") for c in creators):
+                return
+            new = f"Tool: sbom-fixer-{__version__}"
+            if isinstance(creators, list):
+                creators.append(new)
+                ctx.log.add(self.id, f"/creationInfo/creators/{len(creators) - 1}", "added", None, new, INFO,
+                            "No 'Tool:' creator; sbom-fixer added as the default tool")
+            else:
+                info["creators"] = [new]
+                ctx.log.add(self.id, "/creationInfo/creators", "added", creators, [new], INFO,
+                            "No creators; sbom-fixer added as the default tool")
+            return
+        meta = doc.setdefault("metadata", {})
+        if not isinstance(meta, dict) or _has_tool(meta.get("tools")):
+            return
+        tools, form = _tool_entry(ctx)
+        old = meta.get("tools")
+        meta["tools"] = tools
+        ctx.log.add(self.id, "/metadata/tools", "added", old, tools, INFO, f"No tool named; sbom-fixer added as the default tool ({form})")
 
 
 def _all_refs(doc: dict[str, Any]) -> set[str]:
@@ -437,7 +526,10 @@ class Provenance(Rule):
         meta = doc.setdefault("metadata", {})
         tool = {"name": "sbom-fixer", "version": __version__}
         tools = meta.get("tools")
-        if isinstance(tools, dict):
+        listed = tools.get("components") if isinstance(tools, dict) else tools
+        if isinstance(listed, list) and any(isinstance(t, dict) and t.get("name") == "sbom-fixer" for t in listed):
+            pass  # already named, for example by SAN-013
+        elif isinstance(tools, dict):
             tools.setdefault("components", []).append({"type": "application", "name": "sbom-fixer", "version": __version__})
         elif isinstance(tools, list):
             tools.append(tool)

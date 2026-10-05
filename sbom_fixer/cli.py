@@ -13,7 +13,15 @@ from . import __version__
 from .audit.ntia import ntia_check
 from .audit.sbomqs import sbomqs_score
 from .errors import SbomFixerError
-from .pipeline import EXIT_BISECT, EXIT_CANNOT_FIX, EXIT_OK, EXIT_VERIFY, RunResult, run_fix
+from .pipeline import (
+    EXIT_BISECT,
+    EXIT_CANNOT_FIX,
+    EXIT_NO_SCANNABLE,
+    EXIT_OK,
+    EXIT_VERIFY,
+    RunResult,
+    run_fix,
+)
 from .profile import Profile, load_profile, parse_profile
 from .validate import group
 
@@ -82,7 +90,7 @@ def fix(
     acceptance: Annotated[str | None, typer.Option(help="Override acceptance: profile | checkmarx | schema-only")] = None,
     verify_each_step: Annotated[bool, typer.Option("--verify-each-step", help="Same as --acceptance checkmarx")] = False,
     verify_output: Annotated[bool, typer.Option("--verify", help="Upload the fixed file to the Checkmarx verification project")] = False,
-    expected_packages: Annotated[int | None, typer.Option(help="Expected Checkmarx package count for --verify (5% tolerance)")] = None,
+    expected_packages: Annotated[int | None, typer.Option(help="Expected Checkmarx package count for --verify (5% tolerance; default: components with a supported purl)")] = None,
     max_uploads: Annotated[int, typer.Option(help="Upload budget for --verify-each-step")] = 6,
     no_audit: Annotated[bool, typer.Option("--no-audit", help="Skip the NTIA / sbomqs quality audit")] = False,
     accepted: Annotated[str | None, typer.Option(help="Override cyclonedx accepted_versions, e.g. 1.4,1.5")] = None,
@@ -105,13 +113,15 @@ def fix(
                 typer.echo(f"error: {exc}", err=True)
                 worst = max(worst, EXIT_CANNOT_FIX)
                 continue
-            if verify_output and r.ok and r.outputs.get("sbom"):
+            if verify_output and r.ok and r.outputs.get("sbom") and r.exit_code != EXIT_NO_SCANNABLE:
                 from .checkmarx import verify as cx_verify
                 from .notes import render
                 from .serialize import write_text
 
-                ok, res = cx_verify(cx, Path(r.outputs["sbom"]), expected_packages)
-                r.verification = dict(res.to_dict(), expected_packages=expected_packages)
+                # default: the number of components Checkmarx is expected to scan (notes section 4)
+                expected = expected_packages if expected_packages is not None else (r.coverage.scanned if r.coverage else None)
+                ok, res = cx_verify(cx, Path(r.outputs["sbom"]), expected)
+                r.verification = dict(res.to_dict(), expected_packages=expected)
                 write_text(render(r), Path(r.outputs["notes"]))
                 if not ok:
                     r.exit_code = EXIT_VERIFY
@@ -136,7 +146,8 @@ def audit(
     rep = ntia_check(doc, det.spec)
     qs = sbomqs_score(str(file))
     if as_json:
-        typer.echo(json.dumps({"ntia": rep.to_dict(), "sbomqs": {"available": qs.available, "score": qs.score, "error": qs.error}}, indent=2))
+        typer.echo(json.dumps({"ntia": rep.to_dict(), "sbomqs": {"available": qs.available, "score": qs.score, "grade": qs.grade,
+                                                                 "error": qs.error, "exe": qs.exe}}, indent=2))
         raise typer.Exit(EXIT_OK)
     typer.echo(f"{file.name}: {det.spec} {det.version}")
     typer.echo(f"  NTIA minimum elements: {'PASS' if rep.passed else 'FAIL'}")
@@ -144,7 +155,10 @@ def audit(
         typer.echo(f"    {name:28} {cov.covered}/{cov.total}" + (f"   missing e.g. {', '.join(cov.missing_examples[:3])}" if cov.missing_examples else ""))
     for name, ok in rep.document.items():
         typer.echo(f"    {name:28} {'yes' if ok else 'no'}")
-    typer.echo(f"  sbomqs score: {qs.score if qs.score is not None else 'n/a'}" + (f" ({qs.error})" if qs.error else ""))
+    score = f"{qs.score:.2f}" + (f" (grade {qs.grade})" if qs.grade else "") if qs.score is not None else "n/a"
+    typer.echo(f"  sbomqs score: {score}" + (f" ({qs.error})" if qs.error else ""))
+    if qs.exe:
+        typer.echo(f"  sbomqs binary: {qs.exe}")
     raise typer.Exit(EXIT_OK)
 
 
