@@ -2,7 +2,7 @@
 // Exit codes: 0 unchanged, 1 fixed, 2 cannot fix, 3 forbidden data loss, 4 quality gate, 5 verification failed,
 // 7 no component has a purl type Checkmarx supports (Checkmarx would fail the scan).
 // The upload below uses the cx CLI, so the profile is checkmarx-cli (same versions as checkmarx: 1.6 and 1.7 are kept).
-// If your cx version rejects CycloneDX 1.7, add --accepted 1.3,1.4,1.5,1.6 to the fix command.
+// If your cx version rejects CycloneDX 1.7, add --allow-downgrade --accepted 1.3,1.4,1.5,1.6 to the fix command.
 stage('SBOM: fix for Checkmarx') {
   steps {
     sh '''

@@ -21,6 +21,7 @@ _REMOVED_KEYS = {
 _TOP_KEYS = {
     "name", "description", "cyclonedx", "spdx", "acceptance", "tools_form", "flatten_nested_components",
     "require_purl", "allow_data_loss", "max_size_mb", "quality", "frameworks", "provenance", "purl", "ensure_tools",
+    "allow_downgrade",
 }
 _SPEC_KEYS = {"floor", "accepted_versions", "max_version", "future_versions"}
 _PURL_KEYS = {"supported_types", "os_types", "remap", "unsupported_action", "os_package_action", "strip_url_qualifiers",
@@ -95,6 +96,7 @@ class Profile:
     provenance: bool = True
     purl: PurlPolicy | None = None
     ensure_tools: bool = False
+    allow_downgrade: bool = False  # False: fix at the declared schema version only (no descent)
 
     def rules_for(self, spec: str) -> SpecRules:
         if spec not in self.specs:
@@ -173,6 +175,7 @@ def parse_profile(data: dict[str, Any], source: str = "<dict>") -> Profile:
         provenance=bool(data.get("provenance", True)),
         purl=_parse_purl(data.get("purl")),
         ensure_tools=bool(data.get("ensure_tools", False)),
+        allow_downgrade=bool(data.get("allow_downgrade", False)),
     )
 
 

@@ -115,6 +115,11 @@ EXTRA_DESCRIPTIONS = {
     "CDX-VER": "Declared spec version changed by one level during descent.",
     "SPDX-VER": "Declared SPDX version changed by one level during descent.",
     "PRUNE-001": "Field is not allowed by the schema of the current version and was removed.",
+    "COERCE-001": "A value had a JSON type the schema does not allow; it was converted where the meaning is clear "
+                  "(\"no\" -> false, \"42\" -> 42, a name -> {\"name\": ...}).",
+    "COERCE-002": "A value the schema rejects could not be repaired by any rule; it was removed so the file stays on its "
+                  "own schema version (fix does not downgrade).",
+    "VER-KEEP": "The declared version is not in the profile's accepted_versions; the file was kept at its version.",
 }
 
 

@@ -6,12 +6,12 @@ For each SBOM the tool:
 
 1. Checks the file against the schema of the version it **declares**, and repairs what can be repaired without guessing.
 2. If the corrected file is OK (schema-valid **and** accepted by the consumer), it stops. The version does not change.
-3. If not, it steps down **one version** (for example 1.6 to 1.5), applies that hop's rules, and checks again.
-4. It repeats until a level is OK or the floor is reached (exit code 2, with every attempt reported).
+3. Errors no repair rule can fix are resolved **on the same schema**: a value of the wrong JSON type is converted when the meaning is clear (COERCE-001), otherwise the rejected value is removed and reported as DATA_LOSS (COERCE-002).
+4. **The version never changes.** A version the profile does not list is kept with a warning (VER-KEEP). The only exceptions: CycloneDX 1.8+ (no schema exists) is brought to 1.7, and `--allow-downgrade` (or `allow_downgrade: true` in a profile) turns on the old behaviour of stepping down one version at a time (for example 1.7 to 1.6) with the hop rules.
 
 For Checkmarx (profiles `checkmarx` and `checkmarx-cli`) it also:
 
-- keeps CycloneDX 1.6 and 1.7 at their own version in every profile (`checkmarx`, `checkmarx-cli`, `compliance`); only `--accepted` can cap them for one run;
+- keeps CycloneDX 1.6 and 1.7 at their own version in every profile (`checkmarx`, `checkmarx-cli`, `compliance`); nothing steps down unless `--allow-downgrade` is given;
 - brings a newer CycloneDX version (1.8, 1.9, ...) down to 1.7 with a generic "future hop" (CDX-FWD-*);
 - keeps every purl type Checkmarx supports as written, repairs the format Checkmarx cannot match (npm `@` scope, missing version or groupId, URL qualifiers), remaps unsupported types only on hard evidence (CXP-010..013) and lists every component Checkmarx will skip;
 - converts a purl written as a web URL (`https://...`) into the real purl when it is a registry URL (SAN-009);
@@ -61,7 +61,8 @@ Useful options for `fix`:
 
 | Option | Effect |
 |---|---|
-| `--accepted 1.4,1.5` | Override the profile's accepted CycloneDX versions for this run |
+| `--accepted 1.4,1.5` | Override the profile's accepted CycloneDX versions for this run (without `--allow-downgrade` it only decides the VER-KEEP warning) |
+| `--allow-downgrade` | Step down one version at a time when the file is not accepted at its own version (off by default) |
 | `--verify-each-step` | Ask Checkmarx (real upload) at each level instead of the profile list; `--max-uploads` sets the budget |
 | `--verify --expected-packages N` | Upload the final file and check the package count (5% tolerance) |
 | `--no-audit` | Skip the NTIA / sbomqs audit |
@@ -100,6 +101,8 @@ references to other elements (`ref`, `dependsOn`, `assemblies`, relationships). 
 package. `fill-all` does not expand deprecated fields or recursive structures (components inside new components); objects
 created deeper than 4 levels get only their required fields.
 
+Big files: `fill-all` adds every schema field to every component, so 5,000 components become about 1.7 million fields (~50x the input, about a minute). Above 5,000 entries the report groups fields by path pattern. For a Checkmarx upload use `fill-required` (+ `fix`).
+
 Outputs: `<name>.fill-<required|all>.<cdx|spdx>.json` and `<name>.fill-<required|all>.<cdx|spdx>.report.json` with
 `prepared` (how the input was read), `repairs` (fix rules applied), `removed_invalid` (converted or removed values),
 `fills` (every added field with its source), `skipped` and `unresolved_required`. Exit 0 = schema-valid output, 1 = some
@@ -125,7 +128,7 @@ For `out/<name>.<profile>.*`:
 |---|---|
 | 0 | Already compatible; output identical to input |
 | 1 | Fixed |
-| 2 | Cannot fix: unsupported format, below the floor, or no level down to the floor was OK |
+| 2 | Cannot fix: unsupported format, a version with no schema (CycloneDX 1.0/1.1, 2.x), or schema errors that even the same-version coercion could not resolve |
 | 3 | DATA_LOSS changes happened and the profile sets `allow_data_loss: false` |
 | 4 | Quality gate failed (profile `quality.audit: gate`) |
 | 5 | Checkmarx verification failed |
@@ -139,14 +142,15 @@ Built in: `checkmarx` (web portal), `checkmarx-cli` (cx CLI / Jenkins, same vers
 ```yaml
 name: checkmarx
 cyclonedx:
-  floor: "1.3"                              # lowest version the descent may reach ("declared" = never downgrade)
-  accepted_versions: ["1.3", "1.4", "1.5", "1.6", "1.7"]  # 1.7 PROVISIONAL until docs/checkmarx-matrix.md is filled in
+  floor: "1.2"                              # lowest version for --allow-downgrade ("declared" = never)
+  accepted_versions: ["1.2", "1.3", "1.4", "1.5", "1.6", "1.7"]  # 1.7 PROVISIONAL until docs/checkmarx-matrix.md is filled in
   max_version: "1.7"                        # newer declared versions (1.8+) are brought down to this one
   future_versions: downgrade                # downgrade | reject (default reject)
 spdx:
   floor: "2.2"
   accepted_versions: ["2.2", "2.3"]
 acceptance: profile        # profile | checkmarx | schema-only
+allow_downgrade: false     # true = step down one version when the file is not accepted (old behaviour)
 tools_form: as-is          # legacy-array if Checkmarx only reads the 1.4 tools array
 flatten_nested_components: true
 require_purl: warn         # fail -> exit 2 when a component has no valid purl
@@ -178,13 +182,14 @@ Only needed for `verify`, `bisect`, `--verify` and `--verify-each-step`. The `cx
 | `SBOM_FIXER_CX_SCAN_ARGS`, `SBOM_FIXER_CX_RESULTS_ARGS` | Override the `cx` argument templates if your CLI version uses other flags (check `cx scan create --help`) |
 | `SBOM_FIXER_CX_TIMEOUT_S` | Scan timeout (default 900) |
 | `SBOMQS_BIN` | Path to a `sbomqs` executable; overrides the copy in `tools/sbomqs` and PATH |
+| `SBOM_FIXER_PROGRESS=1` / `0` | Force progress lines on stderr on / off (default: on for inputs of 1 MB or more) |
 | `SBOM_FIXER_FAST_VALIDATION=0` | Disable the fastjsonschema pre-check (use only for debugging) |
 
 ## Development
 
 ```bash
 python tools/make_corpus.py          # regenerate corpus/ and corpus/expected.yaml
-.venv/Scripts/pytest                 # 308 tests, about 35 seconds
+.venv/Scripts/pytest                 # 328 tests, about 40 seconds
 .venv/Scripts/ruff check sbom_fixer tests tools
 .venv/Scripts/mypy sbom_fixer
 python tools/vendor_schemas.py       # only when upgrading schemas; commit with schemas/SOURCES.md
@@ -212,4 +217,4 @@ Adding a rule follows the seven-step recipe in the Implementation Plan (evidence
 - Checkmarx `accepted_versions` are provisional (ADR-01) until the upload matrix is run in your tenant.
 - The `cx` flags and results JSON fields used by `checkmarx.py` are defaults; confirm them for your CLI version. They have not been run against a real tenant.
 - The `corpus/` files are synthetic, modelled on typical generator output. Add real SBOMs from your pipelines (SBOMFIX-103).
-- Not supported yet: CycloneDX XML, SPDX tag-value / RDF / 3.0, upgrade hops below the floor, REP-013 and REP-014.
+- Not supported yet: CycloneDX XML, SPDX tag-value / RDF / 3.0, upgrade hops, REP-013 and REP-014.

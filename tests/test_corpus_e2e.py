@@ -61,7 +61,8 @@ def capped(profile: Profile, top: str) -> Profile:
     """The profile with CycloneDX accepted only up to `top` (the pre-1.6 Checkmarx behaviour)."""
     rules = profile.rules_for("cyclonedx")
     accepted = [v for v in rules.accepted_versions if tuple(map(int, v.split("."))) <= tuple(map(int, top.split(".")))]
-    return replace(profile, specs=dict(profile.specs, cyclonedx=replace(rules, accepted_versions=accepted)))
+    return replace(profile, specs=dict(profile.specs, cyclonedx=replace(rules, accepted_versions=accepted)),
+                   allow_downgrade=True)
 
 
 def test_dual_output_compliance_copy_is_never_downgraded(tmp_path: Path) -> None:

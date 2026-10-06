@@ -152,7 +152,10 @@ trivy/payments-api.trivy.json:
 unsupported/bom.xml:
   exit_code: 2
 unsupported/legacy-1.2.cdx.json:
-  exit_code: 2
+  exit_code: 0
+  final_version: '1.2'
+  version_path:
+  - '1.2'
 unsupported/spdx3.jsonld:
   exit_code: 2
 vendor/acme-portal.cdx.json:

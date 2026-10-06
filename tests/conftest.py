@@ -30,8 +30,9 @@ def bom(version: str = "1.5", **extra: Any) -> dict[str, Any]:
 
 
 def profile_with(accepted: list[str], floor: str = "1.3", **kw: Any) -> Profile:
+    """Test profile for the descent (hop) machinery, which is opt-in: allow_downgrade defaults to True here."""
     data = {"name": "test", "cyclonedx": {"floor": floor, "accepted_versions": accepted},
-            "spdx": {"floor": "2.2", "accepted_versions": ["2.2", "2.3"]}, "provenance": False}
+            "spdx": {"floor": "2.2", "accepted_versions": ["2.2", "2.3"]}, "provenance": False, "allow_downgrade": True}
     data.update(kw)
     return parse_profile(data)
 

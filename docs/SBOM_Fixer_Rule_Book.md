@@ -5,7 +5,7 @@ Installation, daily use and rule reference for `sbom-fixer` 1.0.0. Follow the st
 | Item | Value |
 |---|---|
 | Tool | `sbom-fixer` 1.0.0 (Python command-line tool) |
-| What it does | Repairs SBOMs at their declared version, steps down one version only when needed, and explains every change |
+| What it does | Repairs SBOMs on their own schema version (never a downgrade unless --allow-downgrade), fills missing fields, and explains every change |
 | Works on | Windows 10/11, Linux, macOS, or any machine with Docker |
 | Needs | Python 3.11 or newer (3.12 recommended); internet only for installing packages. sbomqs is in the repository (`tools\sbomqs`), nothing to download for the quality score |
 | Source folder | `sbom-fixer` (README.md, CHANGELOG.md, docs/ inside it) |
@@ -23,7 +23,7 @@ Checkmarx rejects many SBOMs without a clear error. The cause is almost always a
 | Case | What is wrong | What the tool does |
 |---|---|---|
 | A. Same-version error | The file is invalid against the version it declares (wrong case, null values, bad dates, broken licenses) | Repairs it at the same version |
-| B. Unsupported version | The file is valid, but the consumer does not read that version (for example CycloneDX 1.8, newer than the tool knows) | Steps down one version at a time until a version is accepted |
+| B. Unsupported version | The file declares a version the tool has no schema for (CycloneDX 1.8+) | Brings it to 1.7, the newest known schema. Other versions are never changed (stepping down only with `--allow-downgrade`) |
 | C. Importer needs | The file is valid and supported but still fails or imports nothing (no purls, purl types Checkmarx does not scan, duplicate refs, UTF-16) | Applies Checkmarx-specific clean-ups and reports every component Checkmarx will skip |
 
 For every SBOM the tool runs this loop:
@@ -31,8 +31,8 @@ For every SBOM the tool runs this loop:
 1. Start at the version the SBOM declares.
 2. Repair what can be repaired, remove fields the schema does not allow, and apply the clean-ups.
 3. If the file is now valid and the version is accepted, stop. The version does not change.
-4. If not, go one version lower (for example 1.7 to 1.6), convert the fields that changed between those versions, and go back to step 2.
-5. If even the lowest allowed version (the floor) is not OK, stop with exit code 2 and report every attempt.
+4. If errors remain that no rule can repair, resolve them on the same schema: convert a value of the wrong type when the meaning is clear (COERCE-001), otherwise remove the rejected value and report it as DATA_LOSS (COERCE-002). The version never changes (going one version lower needs `--allow-downgrade`).
+5. If the file is still not valid, stop with exit code 2 and report the remaining errors. A version the profile does not list is kept with a warning (VER-KEEP).
 
 Every change is recorded with a rule ID. The diff, the notes file and the change log are all generated from that record.
 
@@ -234,7 +234,7 @@ Expected: `level 1.6 : ACCEPTED`, `exit code : 1`, and seven files in `examples\
 pytest
 ```
 
-Expected: `308 passed`.
+Expected: `328 passed`.
 
 **Check 5 - The quality score works offline:**
 
@@ -304,7 +304,7 @@ Open `build\sbom-fixed\sbom.checkmarx.notes.txt`. Step 09 explains every section
 
 ### 8.6 Upload to Checkmarx
 
-Upload `build\sbom-fixed\sbom.checkmarx.cdx.json`, never the original, through the portal. For an upload with the cx CLI (Jenkins, GitHub Action), fix with `-p checkmarx-cli` and upload `sbom.checkmarx-cli.cdx.json`; it keeps CycloneDX 1.6 and 1.7 like the checkmarx profile. If your cx version rejects 1.7, add `--accepted 1.3,1.4,1.5,1.6` for that run. Use the SBOM flag your CLI version documents (`cx scan create --help`).
+Upload `build\sbom-fixed\sbom.checkmarx.cdx.json`, never the original, through the portal. For an upload with the cx CLI (Jenkins, GitHub Action), fix with `-p checkmarx-cli` and upload `sbom.checkmarx-cli.cdx.json`; it keeps CycloneDX 1.6 and 1.7 like the checkmarx profile. If your cx version rejects 1.7, add `--allow-downgrade --accepted 1.3,1.4,1.5,1.6` for that run. Use the SBOM flag your CLI version documents (`cx scan create --help`).
 
 Exit code 7 means the file is fixed but has no component with a purl type Checkmarx supports; Checkmarx would fail the scan, so do not upload it (Step 10).
 
@@ -398,7 +398,7 @@ Change severities:
 |---|---|---|
 | 0 | Already compatible; output identical to input | Upload the output |
 | 1 | Fixed | Upload the output; read the notes once |
-| 2 | Cannot fix | Read the notes header: unsupported format (XML, SPDX 3.0, tag-value), version below the floor, or no version down to the floor was OK |
+| 2 | Cannot fix | Read the notes header: unsupported format (XML, SPDX 3.0, tag-value), a version with no schema (CycloneDX 1.0/1.1, 2.x), or schema errors that even the same-version coercion could not resolve |
 | 3 | Data loss happened and the profile forbids it | Review section 3 of the notes, or allow data loss in the profile |
 | 4 | Quality gate failed | Fix NTIA gaps (supplier, author) at the source |
 | 5 | Checkmarx verification failed | Read section 9 of the notes; run `sbom-fixer bisect` |
@@ -429,7 +429,7 @@ Profile keys:
 | Key | Values | Effect |
 |---|---|---|
 | `cyclonedx.accepted_versions` | list, for example `["1.4", "1.5"]` | Versions the consumer accepts |
-| `cyclonedx.floor` | a version or `declared` | Lowest version the tool may step down to |
+| `cyclonedx.floor` | a version or `declared` | Lowest version for `--allow-downgrade` |
 | `cyclonedx.max_version` | a version, for example `"1.7"` | Newer declared versions (1.8, 1.9, ...) are brought down to this one |
 | `cyclonedx.future_versions` | `downgrade` / `reject` | reject (default) gives exit 2 for a version newer than the tool knows |
 | `ensure_tools` | `true` / `false` | Add sbom-fixer to metadata.tools (SPDX: creators) when the SBOM names no tool |
@@ -443,6 +443,7 @@ Profile keys:
 | `flatten_nested_components` | `true` / `false` | Move nested components to the top level |
 | `require_purl` | `warn` / `fail` | `fail` gives exit 2 when a component has no purl |
 | `allow_data_loss` | `true` / `false` | `false` gives exit 3 on any DATA_LOSS change |
+| `allow_downgrade` | `true` / `false` (default `false`) | `true` steps down one version when the file is not accepted; same as `--allow-downgrade` |
 | `provenance` | `true` / `false` | Record sbom-fixer details in the output metadata |
 | `quality.audit` | `report`, `gate`, `off` | `gate` turns quality failures into exit 4 |
 | `quality.min_score`, `quality.score_tolerance` | numbers | sbomqs thresholds |
@@ -599,13 +600,13 @@ The nightly job in `jenkins\nightly-corpus.groovy` uploads the whole sample corp
 | Prefix | Case | When it runs | Meaning |
 |---|---|---|---|
 | `REP-` | A | At every version level | Repairs errors against the current version's schema |
-| `CDX17-`, `CDX16-`, `CDX15-`, `CDX14-`, `SPDX23-` | B | Once, when stepping down from that version | Converts fields that changed between two versions |
+| `CDX17-`, `CDX16-`, `CDX15-`, `CDX14-`, `SPDX23-` | B | Once, when stepping down from that version (only with `--allow-downgrade`) | Converts fields that changed between two versions |
 | `SAN-` | C | At every version level (SAN-060 and SAN-090 once at the end) | Clean-ups for the importer (purl URLs, default tool, refs, licences, ...) |
 | `CXP-` | C | At every version level, only in profiles with a purl section | Checkmarx purl rules: keep supported types, repair their format, remap unsupported types on evidence, report the rest |
 | `CDX-FWD-` | B | Once, for a CycloneDX version newer than the tool knows (1.8+) | Generic step down to max_version |
 | `PRUNE-001` | – | At every version level | Removes a field the current schema does not allow (always DATA_LOSS) |
 | `ENC-001/002/003` | – | At the start | File was UTF-8 with BOM, UTF-16, or not UTF-8 |
-| `CDX-VER`, `SPDX-VER` | – | At each step down | The declared version was changed |
+| `CDX-VER`, `SPDX-VER` | – | At each step down (only with `--allow-downgrade`) | The declared version was changed |
 
 ### 15.2 Rules every rule follows
 
@@ -721,7 +722,7 @@ Online references: CycloneDX specification (github.com/CycloneDX/specification),
 | `.venv` copied from another machine does not work | Absolute paths inside `.venv` | Delete `.venv` and create it again (Step 4.2) |
 | Exit 2 with "XML ... not supported" | CycloneDX XML input | Regenerate the SBOM as JSON |
 | Exit 2 with "SPDX 3.0" or "tag-value" | Unsupported SPDX format | Regenerate as CycloneDX JSON or SPDX 2.3 JSON |
-| Exit 2 with "below the floor" | Very old version such as 1.2 | Regenerate with a newer generator version |
+| Exit 2 with "has no vendored schema" | CycloneDX 1.0 / 1.1 (XML-only versions) or 2.x | Regenerate as CycloneDX JSON 1.2 or newer |
 | Exit 2 with "schema errors remain" at every level | An error no rule can fix | Run `sbom-fixer check` and look at the grouped errors; report them to the platform team |
 | Output file looks unchanged but exit code is 1 | Only the encoding was fixed (BOM or UTF-16) | Nothing to do; the output is correct UTF-8 |
 | Quality score shows "n/a" | sbomqs not found, or it cannot read the original | See Step 13.6 |
@@ -755,7 +756,7 @@ Check `CHANGELOG.md`; any release that adds or changes rules can change outputs.
 
 ### 17.3 When Checkmarx supports a newer version
 
-Add the version to `accepted_versions` in the `checkmarx` profile. Files at that version then stop stepping down. No code change is needed.
+Add the version to `accepted_versions` in the `checkmarx` profile so files at that version no longer get the VER-KEEP warning. No code change is needed (fix never changes the version anyway).
 
 ### 17.5 When a new sbomqs is released
 

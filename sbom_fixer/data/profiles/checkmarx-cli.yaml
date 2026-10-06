@@ -1,18 +1,20 @@
 # Profile for uploads with the Checkmarx One CLI (cx scan create), used by the Jenkins stage.
 # Same versions as checkmarx.yaml: CycloneDX 1.3-1.7 are repaired at their own version and never downgraded.
 # Note: the Checkmarx SBOM Reports page states the CLI reads CycloneDX up to 1.6. If a 1.7 upload is rejected by
-# your cx version, cap it for one run with --accepted 1.3,1.4,1.5,1.6 (1.7 then goes to 1.6 via the CDX17 hops).
+# your cx version, cap it for one run with --allow-downgrade --accepted 1.3,1.4,1.5,1.6 (1.7 then goes to 1.6 via the
+# CDX17 hops). fix never steps down without --allow-downgrade.
 name: checkmarx-cli
 description: Checkmarx One SCA import copy (cx CLI, Jenkins, GitHub Action)
 cyclonedx:
-  floor: "1.3"
-  accepted_versions: ["1.3", "1.4", "1.5", "1.6", "1.7"]   # repaired at the declared version, never changed
+  floor: "1.2"                  # only used with allow_downgrade
+  accepted_versions: ["1.2", "1.3", "1.4", "1.5", "1.6", "1.7"]   # repaired at the declared version, never changed
   max_version: "1.7"            # a newer declared version (1.8, 1.9, ...) is brought down to this one
   future_versions: downgrade    # downgrade | reject
 spdx:
   floor: "2.2"
   accepted_versions: ["2.2", "2.3"]
 acceptance: profile          # profile | checkmarx (real upload per level) | schema-only
+allow_downgrade: false      # fix repairs on the file's own schema version; true (or --allow-downgrade) steps down one version at a time
 tools_form: as-is            # as-is | legacy-array (use legacy-array if Checkmarx only reads the 1.4 array form)
 ensure_tools: true           # add sbom-fixer to metadata.tools (SPDX: creators) when the SBOM names no tool
 flatten_nested_components: true

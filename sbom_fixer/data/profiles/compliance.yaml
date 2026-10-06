@@ -8,6 +8,7 @@ spdx:
   floor: declared
   accepted_versions: ["2.2", "2.3"]
 acceptance: schema-only
+allow_downgrade: false      # fix repairs on the file's own schema version; true (or --allow-downgrade) steps down one version at a time
 tools_form: as-is
 flatten_nested_components: false
 require_purl: warn

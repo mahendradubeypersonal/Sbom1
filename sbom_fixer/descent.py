@@ -109,6 +109,9 @@ def descend(doc: dict[str, Any], spec: str, declared: str, profile: Profile, ora
             rule = rule_by_id(rule_id)
             if rule is not None:
                 rule.apply(doc, ctx)
+    if not profile.allow_downgrade:
+        return _same_version(doc, spec, declared, start, oracle, log, ctx, result,
+                             initial_issues if start == declared else None)
     floor = rules.floor_for(start)
     if order.index(start) < order.index(floor):
         result.attempts.append(Attempt(declared, -1, False,
@@ -122,6 +125,10 @@ def descend(doc: dict[str, Any], spec: str, declared: str, profile: Profile, ora
         ctx.version = version
         errors = process_level(doc, ctx, first)
         first = None
+        if errors:  # same-version resolution first; a lower version is only for files the consumer does not accept
+            errors = coerce_to_schema(doc, spec, version, log)
+            if not errors:
+                errors = process_level(doc, ctx)
         if errors:
             accepted, reason = False, f"{len(errors)} schema errors remain at {version}"
         else:
@@ -144,15 +151,88 @@ def descend(doc: dict[str, Any], spec: str, declared: str, profile: Profile, ora
         set_version(doc, spec, nxt, log)
         version = nxt
 
-    if result.ok:
-        log.level = result.final_version or ""
-        ctx.version = result.final_version or version
-        if content_changed(log):
-            for rule in rules_of(FINAL, spec):
-                rule.apply(doc, ctx)
-            post = validate(doc, spec, ctx.version)
-            if post:
-                result.final_errors = post
-                result.attempts[-1].reason += f"; {len(post)} errors after final rules"
-                result.final_version = None
+    _final_rules(doc, spec, log, ctx, result)
     return result
+
+
+def _final_rules(doc: dict[str, Any], spec: str, log: ChangeLog, ctx: Ctx, result: DescentResult) -> None:
+    if not result.ok:
+        return
+    log.level = result.final_version or ""
+    ctx.version = result.final_version or ctx.version
+    if content_changed(log):
+        for rule in rules_of(FINAL, spec):
+            rule.apply(doc, ctx)
+        post = validate(doc, spec, ctx.version)
+        if post:
+            result.final_errors = post
+            result.attempts[-1].reason += f"; {len(post)} errors after final rules"
+            result.final_version = None
+
+
+def _same_version(doc: dict[str, Any], spec: str, declared: str, version: str, oracle: Oracle, log: ChangeLog,
+                  ctx: Ctx, result: DescentResult, initial: list[Issue] | None) -> DescentResult:
+    """Default: repair at the document's own schema version and never step down (ADR-02 descent is opt-in).
+
+    Errors the repair rules cannot fix are resolved on the same schema: a value of the wrong JSON type is converted
+    when the meaning is clear (COERCE-001), otherwise the value the schema rejects is removed (COERCE-002, DATA_LOSS).
+    """
+    log.level = version
+    ctx.version = version
+    errors = process_level(doc, ctx, initial)
+    if errors:
+        errors = coerce_to_schema(doc, spec, version, log)
+        if not errors:
+            errors = process_level(doc, ctx)  # the repair rules once more on the coerced document
+    if errors:
+        result.attempts.append(Attempt(version, len(errors), False,
+                                       f"{len(errors)} schema errors remain at {version} (same-version fix)", errors[:200]))
+        result.final_errors = errors
+        return result
+    accepted, reason = oracle.accepts(doc, spec, version)
+    if not accepted:
+        reason += "; kept at this version (fix never downgrades; --allow-downgrade to step down)"
+        log.note("VER-KEEP", "/", f"{spec} {version} is not in the profile's accepted_versions; the file stays at "
+                                  f"{version} because fix does not downgrade", "WARN")
+    result.attempts.append(Attempt(version, 0, accepted, reason))
+    result.final_version = version
+    _final_rules(doc, spec, log, ctx, result)
+    return result
+
+
+def coerce_to_schema(doc: dict[str, Any], spec: str, version: str, log: ChangeLog, rounds: int = 6) -> list[Issue]:
+    """Last step of a same-version fix: make the remaining schema errors go away on this version's schema."""
+    from .complete import NONE, _convert
+    from .jsonutil import get_at, pointer
+
+    issues = validate(doc, spec, version)
+    for _ in range(rounds):
+        if not issues:
+            return issues
+        targets: dict[tuple[Any, ...], Issue] = {}
+        for issue in issues:
+            if issue.parts:
+                targets.setdefault(tuple(issue.parts), issue)
+        changed = False
+        for parts in sorted(targets, key=lambda t: (len(t), [str(x) for x in t]), reverse=True):
+            try:
+                container = get_at(doc, parts[:-1])
+                old = container[parts[-1]]
+            except (KeyError, IndexError, TypeError):
+                continue
+            issue = targets[parts]
+            new = _convert(old, issue.expected) if issue.keyword == "type" else NONE
+            if new is not NONE:
+                container[parts[-1]] = new
+                log.add("COERCE-001", pointer(parts), "converted", old, new, "WARN",
+                        f"converted to the type the {version} schema expects ({issue.message[:100]})")
+            else:
+                container.pop(parts[-1])
+                log.add("COERCE-002", pointer(parts), "removed", old, None, "DATA_LOSS",
+                        f"value rejected by the {version} schema and no rule could repair it ({issue.keyword}: "
+                        f"{issue.message[:100]})")
+            changed = True
+        if not changed:
+            return issues
+        issues = validate(doc, spec, version)
+    return issues
