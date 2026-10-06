@@ -66,7 +66,7 @@ def capped(profile: Profile, top: str) -> Profile:
 
 def test_dual_output_compliance_copy_is_never_downgraded(tmp_path: Path) -> None:
     src = CORPUS / "cdxgen" / "analytics.cdxgen.json"
-    cx = run_fix(src, load_profile("checkmarx-cli"), tmp_path)
+    cx = run_fix(src, capped(load_profile("checkmarx-cli"), "1.6"), tmp_path)  # one-off cap, like --accepted 1.3,...,1.6
     comp = run_fix(src, load_profile("compliance"), tmp_path)
     assert cx.final_version == "1.6" and comp.final_version == "1.7" and comp.descent is not None and comp.descent.path == ["1.7"]
     assert Path(cx.outputs["sbom"]).name == "analytics.cdxgen.checkmarx-cli.cdx.json"

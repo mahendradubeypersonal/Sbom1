@@ -12,7 +12,7 @@
 
 | # | Kya | Kaise | Rule IDs |
 |---|---|---|---|
-| 1 | **CycloneDX 1.6 aur 1.7 as-is** | Jo version declare hai (1.3–1.7) usi par repair hota hai, version nahi badalta. `checkmarx-cli` profile 1.7 ko 1.6 par laata hai, kyunki `cx` CLI 1.6 tak padhta hai. | existing REP-*, SAN-* |
+| 1 | **CycloneDX 1.6 aur 1.7 as-is** | Jo version declare hai (1.3–1.7) usi par repair hota hai, version nahi badalta. `checkmarx-cli` profile bhi 1.6 aur 1.7 dono rakhta hai (update 2026-10-06; pehle wo 1.7 ko 1.6 par laata tha). Ek run ke liye cap: `--accepted 1.3,1.4,1.5,1.6`. Pehle likha tha: `cx` CLI 1.6 tak padhta hai. | existing REP-*, SAN-* |
 | 2 | **1.8+ → 1.7** | Generic "future hop": specVersion 1.7, naye fields property mein, naye enum values `other` mein. CycloneDX 2.x refuse hota hai. | CDX-FWD-001/002/003 |
 | 3 | **Checkmarx PURL types** | Supported types jaise hain waise rakhe jaate hain. Format ki dikkatein theek hoti hain. Unsupported types sirf pakke evidence par remap hote hain. Baaki sab report hota hai. | CXP-001..005, 010..013, 020, 021, 030, 051 |
 | 4 | **purl mein `https://` URL** | Registry URL ho to exact purl banta hai. Doosra URL ho to externalReferences mein jaata hai. Supported purl ke URL wale qualifiers hatte hain. | SAN-009, CXP-005 |
@@ -87,7 +87,7 @@ Neeche ka saara content [Scanning SBOMs](https://docs.checkmarx.com/en/34965-728
 | Area | Pehle | Ab |
 |---|---|---|
 | Accepted CycloneDX (`checkmarx`) | 1.3, 1.4, 1.5; isliye 1.6/1.7 hamesha 1.5 par downgrade | 1.3–1.7; version nahi badalta |
-| CLI ke liye | Koi alag profile nahi | `checkmarx-cli`: 1.3–1.6 |
+| CLI ke liye | Koi alag profile nahi | `checkmarx-cli`: 1.3–1.7 (2026-10-06 se; pehle 1.3–1.6) |
 | 1.8+ | exit 2 ("no vendored schema") | Future hop → 1.7 (cli mein → 1.6) |
 | Unsupported purl types | SAN-012: chhoti generic list, sirf INFO note | Checkmarx ki exact list (CXP-020/021); remap on evidence (CXP-010..013) |
 | npm `@` scope | Encode nahi hota tha (purl parse ho jaata hai) | CXP-002 |
@@ -108,8 +108,8 @@ Neeche ka saara content [Scanning SBOMs](https://docs.checkmarx.com/en/34965-728
 |---|---|---|---|
 | CycloneDX 1.3 – 1.5 | Same version repair | Same | REP-*, SAN-*, CXP-* |
 | **CycloneDX 1.6** | **1.6** (repair only) | **1.6** | same |
-| **CycloneDX 1.7** | **1.7** (repair only) | 1.7 → **1.6** (existing CDX17 hops) | + CDX17-* in cli |
-| **CycloneDX 1.8, 1.9, 1.10 …** | Future hop → **1.7** | → 1.7 → **1.6** | CDX-FWD-001/002/003 |
+| **CycloneDX 1.7** | **1.7** (repair only) | **1.7** (repair only); sirf `--accepted ...,1.6` dene par 1.6 | CDX17-* sirf cap ke saath |
+| **CycloneDX 1.8, 1.9, 1.10 …** | Future hop → **1.7** | Future hop → **1.7** | CDX-FWD-001/002/003 |
 | CycloneDX 2.x | Refuse, exit 2 (reason mein VER-002) | same | – |
 | CycloneDX 1.2 | Floor 1.3 se neeche: exit 2 (pehle jaisa; upgrade hop nahi hai) | same | – |
 | CycloneDX XML, SPDX tag-value, SPDX 3.0 | exit 2 (tool sirf JSON padhta hai) | same | – |
@@ -138,7 +138,7 @@ CycloneDX schemas zyada tar objects par `additionalProperties: false` rakhte hai
                    (externalReference ho to) comment mein                     WARN
                  - "other" nahi -> value hatao                                  DATA_LOSS
 5. 1.7 par normal process_level (REPAIR/PRUNE/SANITIZE/CXP); bacha hua PRUNE-001 hata deta hai
-6. Oracle: checkmarx -> 1.7 accept; checkmarx-cli -> CDX17 hops se 1.6
+6. Oracle: checkmarx aur checkmarx-cli dono -> 1.7 accept (`--accepted` se cap ho to CDX17 hops se 1.6)
 ```
 
 - `sbom-fixer:sourceSpecVersion = 1.8` SAN-090 (provenance) likhta hai.
@@ -150,7 +150,7 @@ CycloneDX schemas zyada tar objects par `additionalProperties: false` rakhte hai
 ```yaml
 cyclonedx:
   floor: "1.3"
-  accepted_versions: ["1.3", "1.4", "1.5", "1.6", "1.7"]   # checkmarx-cli: up to "1.6"
+  accepted_versions: ["1.3", "1.4", "1.5", "1.6", "1.7"]   # checkmarx-cli: same
   max_version: "1.7"            # NEW: newer declared versions are brought down to this one
   future_versions: downgrade    # NEW: downgrade | reject (default reject, e.g. compliance profile)
 ```
@@ -162,8 +162,8 @@ Validation (`profile.py`): `max_version` vendored list mein hona chahiye; `futur
 | Scenario | Kya karein |
 |---|---|
 | Portal 1.7 accept karta hai (SBOM Reports page) | `checkmarx` profile jaisa hai |
-| Portal 1.7 reject karta hai (Scanning SBOMs page: 1.0–1.6) | `-p checkmarx-cli`, ya `--accepted 1.3,1.4,1.5,1.6`, ya `checkmarx.yaml` se 1.7 hatao |
-| `cx` CLI / Jenkins / GitHub Action | `checkmarx-cli` (Jenkins stage mein already set hai) |
+| Portal 1.7 reject karta hai (Scanning SBOMs page: 1.0–1.6) | `--accepted 1.3,1.4,1.5,1.6` (ek run), ya profile se 1.7 hatao |
+| `cx` CLI / Jenkins / GitHub Action | `checkmarx-cli` (1.7 bhi rakhta hai). CLI 1.7 reject kare to Jenkins fix command mein `--accepted 1.3,1.4,1.5,1.6` jodo |
 
 Matrix (`docs/checkmarx-matrix.md`) mein `min-cdx-1.7.json` ki row bharne ke baad hi 1.7 ko pakka maano.
 
@@ -370,7 +370,7 @@ Har corpus file par invariants check hote hain: output schema-valid, JSON Patch 
 ### 8.2 Unit tests
 
 - `tests/test_purl_checkmarx.py` (83 cases): har supported alias unchanged; har CXP rule ka positive aur negative case (bina evidence remap nahi, maven bina group nahi, `unknown` version use nahi, unsupported purl ke qualifiers nahi chhede jaate); remove actions aur dependency edges; SAN-009 ke 17 URL patterns; SAN-013 1.4/1.6/SPDX forms aur duplicate-free provenance; coverage chain; CSV; exit 7; CLI; profile validation.
-- `tests/test_future.py` (19 cases): 1.6/1.7 keep, cli 1.7 → 1.6, future hop (scalar/object property, no-properties parent, 4 KB limit, enum → other, enum without other), 1.8 → 1.7 → 1.6 in cli, reject profile, 2.0 refused, end-to-end notes, read-only `check`, profile validation.
+- `tests/test_future.py` (19 cases): 1.6/1.7 keep in every profile and command, `--accepted` cap 1.7 → 1.6, future hop (scalar/object property, no-properties parent, 4 KB limit, enum → other, enum without other), 1.8 → 1.7 → 1.6 in cli, reject profile, 2.0 refused, end-to-end notes, read-only `check`, profile validation.
 - Poora suite: **235 passed**, `ruff` clean, `mypy` clean.
 
 ### 8.3 Checkmarx tenant par abhi baaki
@@ -402,7 +402,7 @@ Har corpus file par invariants check hote hain: output schema-valid, JSON Patch 
 | File | Change |
 |---|---|
 | `sbom_fixer/data/profiles/checkmarx.yaml` | 1.3–1.7, `max_version`, `future_versions`, `ensure_tools`, `purl:` |
-| `sbom_fixer/data/profiles/checkmarx-cli.yaml` | NEW: 1.6 cap |
+| `sbom_fixer/data/profiles/checkmarx-cli.yaml` | NEW: cx CLI / Jenkins profile, 1.3–1.7 (pehle 1.6 cap) |
 | `sbom_fixer/profile.py` | `PurlPolicy`, `max_version`, `future_versions`, `ensure_tools`, validation |
 | `sbom_fixer/schemas.py` | `version_key`, `is_future` |
 | `sbom_fixer/descent.py` | Future hop branch |

@@ -3,7 +3,8 @@
 Where the binary comes from, in this order:
   1. SBOMQS_BIN (full path to a sbomqs executable)
   2. the copy vendored in this repository (tools/sbomqs, pinned by tools/vendor_sbomqs.py), so a checkout scores
-     SBOMs offline without installing anything; on Linux the archive there must be extracted first (see its README)
+     SBOMs offline without installing anything; on Linux the archive there must be extracted first (see its README).
+     Looked up next to the source (editable install) and in the current folder (wheel install run from the checkout)
   3. sbomqs on PATH (the Docker image installs the same pinned version in /usr/local/bin)
 
 JSON field names differ between sbomqs releases (2.x: files[0].sbom_quality_score, 1.x: avg_score); keep the
@@ -70,8 +71,11 @@ def vendored_binary(root: Path = VENDORED) -> Path | None:
 def find_sbomqs() -> str | None:
     if os.environ.get("SBOMQS_BIN"):
         return os.environ["SBOMQS_BIN"]
-    vendored = vendored_binary()
-    return str(vendored) if vendored else shutil.which("sbomqs")
+    for root in (VENDORED, Path.cwd() / "tools" / "sbomqs"):
+        vendored = vendored_binary(root)
+        if vendored:
+            return str(vendored)
+    return shutil.which("sbomqs")
 
 
 def clean_error(text: str) -> str:

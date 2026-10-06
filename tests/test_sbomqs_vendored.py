@@ -45,12 +45,12 @@ def test_discovery_order(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     fake = tmp_path / "vendored.exe"
     fake.write_text("x")
     monkeypatch.setattr(sbomqs_mod.shutil, "which", lambda _: "/usr/bin/sbomqs")
-    monkeypatch.setattr(sbomqs_mod, "vendored_binary", lambda: fake)
+    monkeypatch.setattr(sbomqs_mod, "vendored_binary", lambda root=None: fake)
     monkeypatch.setenv("SBOMQS_BIN", "C:/custom/sbomqs.exe")
     assert sbomqs_mod.find_sbomqs() == "C:/custom/sbomqs.exe"
     monkeypatch.delenv("SBOMQS_BIN")
     assert sbomqs_mod.find_sbomqs() == str(fake)
-    monkeypatch.setattr(sbomqs_mod, "vendored_binary", lambda: None)
+    monkeypatch.setattr(sbomqs_mod, "vendored_binary", lambda root=None: None)
     assert sbomqs_mod.find_sbomqs() == "/usr/bin/sbomqs"
 
 
@@ -126,3 +126,17 @@ def test_audit_command_shows_grade_and_binary() -> None:
 
     res = CliRunner().invoke(app, ["audit", str(CORPUS / "minimal" / "min-cdx-1.6.json")])
     assert res.exit_code == 0 and "(grade " in res.output and "sbomqs binary:" in res.output
+
+
+def test_found_in_current_folder_when_installed_as_wheel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A wheel install lives in site-packages; run from the checkout, tools/sbomqs in the current folder is used."""
+    monkeypatch.delenv("SBOMQS_BIN", raising=False)
+    monkeypatch.setattr(sbomqs_mod, "VENDORED", tmp_path / "site-packages-has-no-tools")
+    monkeypatch.setattr(sbomqs_mod.shutil, "which", lambda _: None)
+    monkeypatch.setattr(sbomqs_mod.platform, "machine", lambda: "AMD64")
+    monkeypatch.setattr(sbomqs_mod.sys, "platform", "win32")
+    exe = tmp_path / "tools" / "sbomqs" / "windows-amd64" / "sbomqs.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("x")
+    monkeypatch.chdir(tmp_path)
+    assert sbomqs_mod.find_sbomqs() == str(exe)

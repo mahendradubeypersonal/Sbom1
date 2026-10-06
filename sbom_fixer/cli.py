@@ -65,7 +65,7 @@ def _echo_summary(r: RunResult) -> None:
 def check(
     file: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="SBOM file")],
     profile: Annotated[str, typer.Option("--profile", "-p", help="Profile name or YAML path")] = "checkmarx",
-    accepted: Annotated[str | None, typer.Option(help="Override cyclonedx accepted_versions, e.g. 1.4,1.5")] = None,
+    accepted: Annotated[str | None, typer.Option(help="Override cyclonedx accepted_versions, e.g. 1.3,1.4,1.5,1.6,1.7")] = None,
 ) -> None:
     """Read-only diagnosis: own-version errors grouped by cause and the version path a fix would take."""
     try:
@@ -93,7 +93,7 @@ def fix(
     expected_packages: Annotated[int | None, typer.Option(help="Expected Checkmarx package count for --verify (5% tolerance; default: components with a supported purl)")] = None,
     max_uploads: Annotated[int, typer.Option(help="Upload budget for --verify-each-step")] = 6,
     no_audit: Annotated[bool, typer.Option("--no-audit", help="Skip the NTIA / sbomqs quality audit")] = False,
-    accepted: Annotated[str | None, typer.Option(help="Override cyclonedx accepted_versions, e.g. 1.4,1.5")] = None,
+    accepted: Annotated[str | None, typer.Option(help="Override cyclonedx accepted_versions, e.g. 1.3,1.4,1.5,1.6,1.7")] = None,
 ) -> None:
     """Fix SBOMs: repair at the declared version, descend only when needed, write SBOM, diff, notes and quality report."""
     worst = EXIT_OK
@@ -160,6 +160,79 @@ def audit(
     if qs.exe:
         typer.echo(f"  sbomqs binary: {qs.exe}")
     raise typer.Exit(EXIT_OK)
+
+
+def _fill(file: Path, out: Path | None, mode: str, include_sensitive: bool, spec: str | None,
+          version: str | None) -> None:
+    import hashlib
+
+    from .complete import fill, prepare_input, render_summary
+    from .pipeline import output_stem
+    from .serialize import write_json, write_text
+
+    if spec is not None and spec not in ("cyclonedx", "spdx"):
+        typer.echo("error: --spec must be cyclonedx or spdx", err=True)
+        raise typer.Exit(EXIT_CANNOT_FIX)
+    raw = file.read_bytes()
+    try:
+        doc, use_spec, use_version, notes = prepare_input(raw, spec, version)
+    except SbomFixerError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(EXIT_CANNOT_FIX) from None
+    stem = output_stem(file)
+    res = fill(doc, use_spec, use_version, mode, file_stem=stem, source_sha256=hashlib.sha256(raw).hexdigest(),
+               include_sensitive=include_sensitive, prepared=notes)
+    out_dir = out or file.parent
+    ext = "cdx" if use_spec == "cyclonedx" else "spdx"
+    sbom_path = out_dir / f"{stem}.fill-{mode}.{ext}.json"
+    report_path = out_dir / f"{stem}.fill-{mode}.{ext}.report.json"
+    write_json(res.doc, sbom_path)
+    report = {"input": file.name, **res.to_dict()}
+    write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str) + "\n", report_path)
+    typer.echo(render_summary(file.name, res, {"sbom": str(sbom_path), "report": str(report_path)}))
+    raise typer.Exit(EXIT_OK if res.errors_after == 0 else 1)
+
+
+_SPEC_HELP = "Treat the input as cyclonedx or spdx (default: detected; plain JSON without markers is cyclonedx)"
+_VERSION_HELP = ("Write this schema version, e.g. 1.6 or 2.3 (default: the declared one; missing/unknown -> 1.6 / 2.3, "
+                 "CycloneDX 1.8+ -> 1.7)")
+
+
+@app.command("fill-required")
+def fill_required(
+    file: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="SBOM or any JSON file")],
+    out: Annotated[Path | None, typer.Option("--out", "-o", help="Output folder (default: next to the input)")] = None,
+    spec: Annotated[str | None, typer.Option("--spec", help=_SPEC_HELP)] = None,
+    version: Annotated[str | None, typer.Option("--version", help=_VERSION_HELP)] = None,
+) -> None:
+    """Make any JSON schema-valid with every MANDATORY field: repair, derive, else placeholder.
+
+    Steps: read any JSON (adds bomFormat/specVersion if missing), apply the fix repair rules at that version (never
+    a downgrade), add each missing required field (derived from the SBOM where possible, else a placeholder), and
+    replace values the schema rejects. Writes <name>.fill-required.<cdx|spdx>.json and
+    <name>.fill-required.<cdx|spdx>.report.json (every change with its source). Identity fields (purl, cpe, ...)
+    and references are only derived, never invented. Exit 0 = schema-valid output.
+    """
+    _fill(file, out, "required", False, spec, version)
+
+
+@app.command("fill-all")
+def fill_all(
+    file: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="SBOM or any JSON file")],
+    out: Annotated[Path | None, typer.Option("--out", "-o", help="Output folder (default: next to the input)")] = None,
+    spec: Annotated[str | None, typer.Option("--spec", help=_SPEC_HELP)] = None,
+    version: Annotated[str | None, typer.Option("--version", help=_VERSION_HELP)] = None,
+    include_sensitive: Annotated[bool, typer.Option("--include-sensitive",
+                                                    help="Also add placeholders for hashes, signatures, vulnerabilities, "
+                                                         "attestations and crypto (off by default)")] = False,
+) -> None:
+    """Make any JSON schema-valid with EVERY field the schema defines: repair, derive, else placeholder.
+
+    Same steps as fill-required, but for required and optional fields. Writes <name>.fill-all.<cdx|spdx>.json and
+    <name>.fill-all.<cdx|spdx>.report.json. Deprecated fields and recursive structures (components inside new
+    components) are not expanded. Exit 0 = schema-valid output.
+    """
+    _fill(file, out, "all", include_sensitive, spec, version)
 
 
 @app.command("schema-diff")

@@ -89,7 +89,7 @@ def test_report_only_never_fails_gate() -> None:
 def test_sbomqs_missing_and_parsing(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.delenv("SBOMQS_BIN", raising=False)
     monkeypatch.setattr(sbomqs_mod.shutil, "which", lambda _: None)
-    monkeypatch.setattr(sbomqs_mod, "vendored_binary", lambda: None)
+    monkeypatch.setattr(sbomqs_mod, "vendored_binary", lambda root=None: None)
     assert sbomqs_mod.sbomqs_score("x.json").available is False
     assert sbomqs_mod._find_score({"files": [{"avg_score": 7.25}]}) == 7.25
     assert sbomqs_mod._find_score({"score": 3}) == 3.0

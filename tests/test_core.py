@@ -129,7 +129,7 @@ def test_builtin_profiles_load() -> None:
     assert cx.rules_for("cyclonedx").max_version == "1.7" and cx.rules_for("cyclonedx").future_versions == "downgrade"
     assert cx.purl is not None and cx.purl.pm_for("YARN") == "NPM" and cx.purl.pm_for("cargo") is None and cx.ensure_tools
     cli = load_profile("checkmarx-cli")
-    assert cli.rules_for("cyclonedx").accepted_versions == ["1.3", "1.4", "1.5", "1.6"]
+    assert cli.rules_for("cyclonedx").accepted_versions == ["1.3", "1.4", "1.5", "1.6", "1.7"]
     comp = load_profile("compliance")
     assert comp.rules_for("cyclonedx").floor_for("1.6") == "1.6"
 

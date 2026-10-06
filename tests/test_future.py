@@ -40,10 +40,57 @@ def test_16_and_17_are_kept(checkmarx: Profile, version: str) -> None:
     assert res.ok and res.final_version == version and res.path == [version] and not log.changes
 
 
-def test_checkmarx_cli_takes_17_to_16() -> None:
+def capped_cli(top: str = "1.6") -> Profile:
+    """checkmarx-cli capped for one run, as with --accepted 1.3,1.4,1.5,1.6."""
+    order = ["1.3", "1.4", "1.5", "1.6", "1.7"]
+    return parse_profile({"name": "cli-capped", "cyclonedx": {"floor": "1.3", "accepted_versions": order[:order.index(top) + 1],
+                                                              "max_version": "1.7", "future_versions": "downgrade"},
+                          "provenance": False})
+
+
+@pytest.mark.parametrize("profile_name", ["checkmarx", "checkmarx-cli", "compliance"])
+@pytest.mark.parametrize("version", ["1.6", "1.7"])
+def test_no_profile_downgrades_16_or_17(profile_name: str, version: str, tmp_path: Path) -> None:
+    src = CORPUS / "minimal" / f"min-cdx-{version}.json"
+    r = run_fix(src, load_profile(profile_name), tmp_path, audit=False)
+    assert r.final_version == version and r.descent is not None and r.descent.path == [version], r.descent
+    assert r.exit_code == 0
+
+
+@pytest.mark.parametrize("rel", ["cdxgen/analytics.cdxgen.json", "cdxgen/crypto.cdx.json", "trivy/payments-api.trivy.json"])
+@pytest.mark.parametrize("profile_name", ["checkmarx", "checkmarx-cli"])
+def test_generator_files_keep_their_version(rel: str, profile_name: str, tmp_path: Path) -> None:
+    r = run_fix(CORPUS / rel, load_profile(profile_name), tmp_path, audit=False)
+    assert r.final_version == r.declared and r.descent is not None and r.descent.path == [r.declared]
+
+
+@pytest.mark.parametrize("version", ["1.6", "1.7"])
+def test_cli_commands_keep_16_and_17(version: str, tmp_path: Path) -> None:
+    import json
+
+    from typer.testing import CliRunner
+
+    from sbom_fixer.cli import app
+
+    src = CORPUS / "minimal" / f"min-cdx-{version}.json"
+    runner = CliRunner()
+    for profile_name in ("checkmarx", "checkmarx-cli"):
+        res = runner.invoke(app, ["check", str(src), "-p", profile_name])
+        assert res.exit_code == 0 and f"level {version}  : ACCEPTED" in res.output, res.output
+    res = runner.invoke(app, ["fix", str(src), "-p", "checkmarx", "-p", "checkmarx-cli", "-p", "compliance",
+                              "--out", str(tmp_path), "--no-audit"])
+    assert res.exit_code == 0, res.output
+    for profile_name in ("checkmarx", "checkmarx-cli", "compliance"):
+        out = json.loads((tmp_path / f"min-cdx-{version}.{profile_name}.cdx.json").read_text(encoding="utf-8"))
+        assert out["specVersion"] == version
+    res = runner.invoke(app, ["audit", str(src), "--json"])
+    assert res.exit_code == 0
+
+
+def test_accepted_override_still_caps_17_to_16() -> None:
     d = bom("1.7")
     d["metadata"]["tools"] = {"components": [{"type": "application", "name": "gen", "version": "1"}]}
-    out, res, _ = run(d, load_profile("checkmarx-cli"))
+    out, res, _ = run(d, capped_cli("1.6"))
     assert res.final_version == "1.6" and res.path == ["1.7", "1.6"] and out["specVersion"] == "1.6"
 
 
@@ -100,8 +147,14 @@ def test_future_hop_enum_without_other_is_removed(checkmarx: Profile) -> None:
     assert any(c.rule_id == "CDX-FWD-003" and c.severity == DATA_LOSS for c in log.changes)
 
 
-def test_future_hop_then_cli_cap(tmp_path: Path) -> None:
-    out, res, _ = run(future_doc(newField18="v"), load_profile("checkmarx-cli"))
+def test_future_hop_lands_on_17_for_every_checkmarx_profile() -> None:
+    for name in ("checkmarx", "checkmarx-cli"):
+        _, res, _ = run(future_doc(newField18="v"), load_profile(name))
+        assert res.path == ["1.8", "1.7"] and res.final_version == "1.7", name
+
+
+def test_future_hop_then_one_off_cap() -> None:
+    _, res, _ = run(future_doc(newField18="v"), capped_cli("1.6"))
     assert res.path == ["1.8", "1.7", "1.6"] and res.final_version == "1.6"
 
 
@@ -146,3 +199,15 @@ def test_future_check_command_is_read_only(tmp_path: Path) -> None:
 def test_future_profile_validation(sec: dict[str, Any], msg: str) -> None:
     with pytest.raises(ProfileError, match=msg):
         parse_profile({"name": "x", "cyclonedx": sec})
+
+
+def test_generator_hint_names_the_actual_target_version(tmp_path: Path) -> None:
+    import json
+
+    doc = json.loads((CORPUS / "cdxgen" / "analytics.cdxgen.json").read_text(encoding="utf-8"))
+    doc["metadata"]["tools"] = {"components": [{"type": "application", "name": "cdxgen", "version": "11.0.0"}]}
+    src = tmp_path / "gen.cdx.json"
+    src.write_text(json.dumps(doc), encoding="utf-8")
+    r = run_fix(src, capped_cli("1.6"), tmp_path / "out", audit=False)
+    notes = Path(r.outputs["notes"]).read_text(encoding="utf-8")
+    assert r.final_version == "1.6" and "--spec-version 1.6" in notes and "--spec-version 1.5" not in notes
