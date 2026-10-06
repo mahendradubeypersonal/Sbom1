@@ -57,11 +57,11 @@ def scan_coverage(doc: dict[str, Any], spec: str) -> tuple[int, int, list[str]]:
 
 _GENERATOR_HINTS = [
     ("trivy", "Trivy writes CycloneDX 1.6 by default and has no version flag in many releases; keep sbom-fixer in the pipeline."),
-    ("syft", "Syft can write an older version directly: -o cyclonedx-json@1.5 (check your Syft version)."),
-    ("cdxgen", "cdxgen can write an older version directly: --spec-version 1.5."),
-    ("cyclonedx-maven", "CycloneDX Maven plugin: set -DschemaVersion=1.5 (or <schemaVersion> in the POM)."),
-    ("cyclonedx-npm", "CycloneDX npm: use --spec-version 1.5."),
-    ("cyclonedx-gradle", "CycloneDX Gradle plugin: set schemaVersion = \"1.5\"."),
+    ("syft", "Syft can write the target version directly: -o cyclonedx-json@{v} (check your Syft version)."),
+    ("cdxgen", "cdxgen can write the target version directly: --spec-version {v}."),
+    ("cyclonedx-maven", "CycloneDX Maven plugin: set -DschemaVersion={v} (or <schemaVersion> in the POM)."),
+    ("cyclonedx-npm", "CycloneDX npm: use --spec-version {v}."),
+    ("cyclonedx-gradle", "CycloneDX Gradle plugin: set schemaVersion = \"{v}\"."),
 ]
 
 
@@ -72,7 +72,7 @@ def source_fixes(result: RunResult) -> list[str]:
     if len(path) > 1:
         for key, hint in _GENERATOR_HINTS:
             if key in gen:
-                out.append(hint)
+                out.append(hint.format(v=path[-1]))
                 break
         else:
             out.append(f"The generator wrote {path[0]}; if it has a spec-version option, set it to {path[-1]}.")

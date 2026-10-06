@@ -6,7 +6,9 @@ Rule changes change outputs, so every new or changed rule is at least a minor ve
 
 Checkmarx version policy and purl handling. Design and sources: `docs/checkmarx-version-purl-fix.md`.
 
-- **Versions:** profile `checkmarx` accepts CycloneDX 1.3-1.7 and repairs 1.6 and 1.7 at their own version (1.7 provisional: the Checkmarx "Scanning SBOMs" page lists 1.0-1.6). New profile `checkmarx-cli` caps at 1.6 for the `cx` CLI; the Jenkins stage uses it.
+- **New commands `fill-required` and `fill-all`** (`sbom_fixer/complete.py`): take any JSON (missing markers, a bare list, unknown or 1.8+ versions), derive required fields, apply the fix repair rules at that version, then add every required (or every schema) field: derived where a rule allows, otherwise a standard/default/enum value or an obvious PLACEHOLDER. Values the schema rejects are converted ("no" -> false, "42" -> 42, string -> {name}) or removed and refilled. Identity fields and references are never invented. Report: `<name>.fill-<mode>.<cdx|spdx>.report.json`. Tests: `tests/test_complete.py`.
+
+- **Versions:** profile `checkmarx` accepts CycloneDX 1.3-1.7 and repairs 1.6 and 1.7 at their own version (1.7 provisional: the Checkmarx "Scanning SBOMs" page lists 1.0-1.6). New profile `checkmarx-cli` for the `cx` CLI (used by the Jenkins stage) with the same versions: 1.6 and 1.7 are kept in every profile. If a cx version rejects 1.7, cap one run with `--accepted 1.3,1.4,1.5,1.6`. Generator hints in the notes now name the actual target version instead of always 1.5. `wheelhouse/sbom_fixer-1.0.0-py3-none-any.whl` rebuilt (the old wheel still had the 1.3-1.5 profile). A wheel install run from the checkout finds `tools/sbomqs` in the current folder.
 - **Future versions:** new spec keys `max_version` and `future_versions` (`reject` default, `downgrade`). CycloneDX 1.8+ is brought down to `max_version` by a generic future hop; CycloneDX 2.x is refused (VER-002 in the reason).
 - **Rules added:**
   - Future hop: CDX-FWD-001, CDX-FWD-002, CDX-FWD-003.

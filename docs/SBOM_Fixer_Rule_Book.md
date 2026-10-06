@@ -23,7 +23,7 @@ Checkmarx rejects many SBOMs without a clear error. The cause is almost always a
 | Case | What is wrong | What the tool does |
 |---|---|---|
 | A. Same-version error | The file is invalid against the version it declares (wrong case, null values, bad dates, broken licenses) | Repairs it at the same version |
-| B. Unsupported version | The file is valid, but the consumer does not read that version (for example CycloneDX 1.8, or 1.7 for the cx CLI) | Steps down one version at a time until a version is accepted |
+| B. Unsupported version | The file is valid, but the consumer does not read that version (for example CycloneDX 1.8, newer than the tool knows) | Steps down one version at a time until a version is accepted |
 | C. Importer needs | The file is valid and supported but still fails or imports nothing (no purls, purl types Checkmarx does not scan, duplicate refs, UTF-16) | Applies Checkmarx-specific clean-ups and reports every component Checkmarx will skip |
 
 For every SBOM the tool runs this loop:
@@ -234,7 +234,7 @@ Expected: `level 1.6 : ACCEPTED`, `exit code : 1`, and seven files in `examples\
 pytest
 ```
 
-Expected: `248 passed`.
+Expected: `308 passed`.
 
 **Check 5 - The quality score works offline:**
 
@@ -304,13 +304,52 @@ Open `build\sbom-fixed\sbom.checkmarx.notes.txt`. Step 09 explains every section
 
 ### 8.6 Upload to Checkmarx
 
-Upload `build\sbom-fixed\sbom.checkmarx.cdx.json`, never the original, through the portal. For an upload with the cx CLI (Jenkins, GitHub Action), fix with `-p checkmarx-cli` and upload `sbom.checkmarx-cli.cdx.json`, because the CLI reads CycloneDX only up to 1.6. Use the SBOM flag your CLI version documents (`cx scan create --help`).
+Upload `build\sbom-fixed\sbom.checkmarx.cdx.json`, never the original, through the portal. For an upload with the cx CLI (Jenkins, GitHub Action), fix with `-p checkmarx-cli` and upload `sbom.checkmarx-cli.cdx.json`; it keeps CycloneDX 1.6 and 1.7 like the checkmarx profile. If your cx version rejects 1.7, add `--accepted 1.3,1.4,1.5,1.6` for that run. Use the SBOM flag your CLI version documents (`cx scan create --help`).
 
 Exit code 7 means the file is fixed but has no component with a purl type Checkmarx supports; Checkmarx would fail the scan, so do not upload it (Step 10).
 
 ### 8.7 Keep the original
 
 Keep the original SBOM and the compliance copy for audits. The Checkmarx copy is a derived file for scanning only.
+
+---
+
+### 8.8 Fill missing fields (any JSON)
+
+Two commands that take **any JSON** and return a schema-valid SBOM with more fields filled:
+
+```bash
+sbom-fixer fill-required sbom.json --out out/   # every MANDATORY field of the schema
+sbom-fixer fill-all      sbom.json --out out/   # EVERY field the schema defines (required and optional)
+sbom-fixer fill-all      sbom.json --include-sensitive   # also hashes, signatures, vulnerabilities, crypto
+sbom-fixer fill-required components.json --spec cyclonedx --version 1.7   # plain JSON / pick the version
+```
+
+Steps, in this order:
+
+1. **Read any JSON.** A JSON array becomes the components (SPDX: packages); an object without `bomFormat`/`spdxVersion` is
+   CycloneDX (or `--spec`); a missing or unknown version becomes 1.6 / 2.3 (or `--version`); CycloneDX 1.8+ goes to 1.7
+   with the future hop. Only invalid JSON syntax and SPDX 3.0 are refused (exit 2).
+2. **Derive required fields first** (so nothing is dropped), then run the `fix` repair and sanitize rules at that version
+   (wrong case, wrong types, bad dates, licence shapes, bad hashes, unknown fields). Never a downgrade.
+3. **Fill** each missing field, in this order of preference: `derived` from the SBOM (purl → name/version/group, bom-ref →
+   purl, publisher ↔ supplier, hash length → alg, evidence → licenses/copyright, purl qualifiers → externalReferences,
+   file name → root component, one dependency entry per component), `standard` (SPDX `NOASSERTION`, `CC0-1.0`),
+   the schema `default`, an allowed `enum` value (`unknown`/`other` first), else a `dummy` that is obviously a placeholder:
+   `PLACEHOLDER-<field>`, `https://placeholder.invalid/`, `placeholder@example.invalid`, `0`, `false`.
+4. **Coerce** values the schema still rejects: convert when the meaning is clear (`"no"` → `false`, `"42"` → `42`, a bare
+   string where an object is expected → `{"name": ...}`), otherwise remove and fill again. Additions that would make the
+   document invalid are rolled back.
+
+Never invented (only derived): identity fields (`purl`, `cpe`, `swid`, `omniborId`, `swhid`, SPDX `externalRefs`) and
+references to other elements (`ref`, `dependsOn`, `assemblies`, relationships). A dummy purl would be scanned as a real
+package. `fill-all` does not expand deprecated fields or recursive structures (components inside new components); objects
+created deeper than 4 levels get only their required fields.
+
+Outputs: `<name>.fill-<required|all>.<cdx|spdx>.json` and `<name>.fill-<required|all>.<cdx|spdx>.report.json` with
+`prepared` (how the input was read), `repairs` (fix rules applied), `removed_invalid` (converted or removed values),
+`fills` (every added field with its source), `skipped` and `unresolved_required`. Exit 0 = schema-valid output, 1 = some
+errors could not be resolved (see the report), 2 = not JSON / unsupported format.
 
 ---
 
@@ -375,7 +414,7 @@ A profile says what the consumer accepts. Three are built in:
 | Profile | Use | Behaviour |
 |---|---|---|
 | `checkmarx` | File to upload to Checkmarx through the portal | Keeps CycloneDX 1.3-1.7 at their own version (1.7 provisional); brings 1.8 and newer down to 1.7; Checkmarx purl rules, coverage CSV and exit 7 |
-| `checkmarx-cli` | File to upload with the cx CLI (Jenkins) | Same as checkmarx, but CycloneDX 1.7 goes down to 1.6 |
+| `checkmarx-cli` | File to upload with the cx CLI (Jenkins) | Same versions as checkmarx (1.6 and 1.7 kept); used by the Jenkins stage |
 | `compliance` | File for customers and auditors | Repairs and cleans, never downgrades (`floor: declared`) |
 
 The built-in files are in `sbom_fixer\data\profiles\`. To change behaviour, copy one, edit it and pass its path:
@@ -545,7 +584,7 @@ The hash must be the one on the `windows-amd64/sbomqs.exe` line of `SHA256SUMS`.
 
 Copy the stage from `jenkins\sbom-fix-stage.groovy` into the service Jenkinsfile, right after the SBOM is generated. It:
 
-1. Runs `fix` with the `checkmarx-cli` and `compliance` profiles and uploads `sbom.checkmarx-cli.cdx.json` with the cx CLI (which reads CycloneDX up to 1.6). The quality score comes from the sbomqs in the Docker image.
+1. Runs `fix` with the `checkmarx-cli` and `compliance` profiles (CycloneDX 1.6 and 1.7 are kept) and uploads `sbom.checkmarx-cli.cdx.json` with the cx CLI. The quality score comes from the sbomqs in the Docker image.
 2. Fails the build only for exit code 2 or higher (7 = nothing Checkmarx can scan).
 3. Archives the original, the outputs, the diffs and the notes.
 
@@ -749,6 +788,8 @@ Add the version to `accepted_versions` in the `checkmarx` profile. Files at that
 | Fix, two copies | `sbom-fixer fix sbom.json -p checkmarx -p compliance --out out` |
 | Fix with other accepted versions | `sbom-fixer fix sbom.json --accepted 1.4 --out out` |
 | Quality only | `sbom-fixer audit sbom.json` |
+| Every mandatory field, any JSON | `sbom-fixer fill-required any.json --out out` |
+| Every schema field, any JSON | `sbom-fixer fill-all any.json --out out` |
 | Fix for the cx CLI | `sbom-fixer fix sbom.json -p checkmarx-cli --out out` |
 | sbomqs score directly | `tools\sbomqs\windows-amd64\sbomqs.exe score sbom.json` |
 | Check the bundled sbomqs | `certutil -hashfile tools\sbomqs\windows-amd64\sbomqs.exe SHA256` |

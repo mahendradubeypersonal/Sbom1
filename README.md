@@ -11,7 +11,7 @@ For each SBOM the tool:
 
 For Checkmarx (profiles `checkmarx` and `checkmarx-cli`) it also:
 
-- keeps CycloneDX 1.6 and 1.7 at their own version (`checkmarx-cli` takes 1.7 to 1.6, because the `cx` CLI reads up to 1.6);
+- keeps CycloneDX 1.6 and 1.7 at their own version in every profile (`checkmarx`, `checkmarx-cli`, `compliance`); only `--accepted` can cap them for one run;
 - brings a newer CycloneDX version (1.8, 1.9, ...) down to 1.7 with a generic "future hop" (CDX-FWD-*);
 - keeps every purl type Checkmarx supports as written, repairs the format Checkmarx cannot match (npm `@` scope, missing version or groupId, URL qualifiers), remaps unsupported types only on hard evidence (CXP-010..013) and lists every component Checkmarx will skip;
 - converts a purl written as a web URL (`https://...`) into the real purl when it is a registry URL (SAN-009);
@@ -47,12 +47,14 @@ The sbomqs quality score works offline out of the box: sbomqs 2.1.2 is vendored 
 sbom-fixer check sbom.json                          # read-only: errors grouped by cause + version path a fix would take
 sbom-fixer fix sbom.json --out out/                 # write the fixed SBOM and reports (profile: checkmarx)
 sbom-fixer fix sbom.json -p checkmarx -p compliance # Checkmarx copy + compliance copy in one run
-sbom-fixer fix sbom.json -p checkmarx-cli           # for upload with the cx CLI (CycloneDX up to 1.6)
+sbom-fixer fix sbom.json -p checkmarx-cli           # for upload with the cx CLI (same versions as checkmarx)
 sbom-fixer audit sbom.json                          # NTIA minimum elements + sbomqs score only
 sbom-fixer schema-diff 1.5 1.6                      # what changed between two schema versions
 sbom-fixer rules                                    # every rule with its case and kind
 sbom-fixer verify out/sbom.checkmarx.cdx.json       # upload to the Checkmarx verification project
 sbom-fixer bisect failing.json                      # find the field that makes Checkmarx reject a file
+sbom-fixer fill-required any.json --out out/        # schema-valid with every mandatory field (derive, else placeholder)
+sbom-fixer fill-all any.json --out out/             # schema-valid with every schema field (derive, else placeholder)
 ```
 
 Useful options for `fix`:
@@ -65,6 +67,43 @@ Useful options for `fix`:
 | `--no-audit` | Skip the NTIA / sbomqs audit |
 
 On Windows PowerShell 5.1, never write SBOMs with `>`; it produces UTF-16. The tool always writes its files itself.
+
+## Fill missing fields: `fill-required` and `fill-all`
+
+Two commands that take **any JSON** and return a schema-valid SBOM with more fields filled:
+
+```bash
+sbom-fixer fill-required sbom.json --out out/   # every MANDATORY field of the schema
+sbom-fixer fill-all      sbom.json --out out/   # EVERY field the schema defines (required and optional)
+sbom-fixer fill-all      sbom.json --include-sensitive   # also hashes, signatures, vulnerabilities, crypto
+sbom-fixer fill-required components.json --spec cyclonedx --version 1.7   # plain JSON / pick the version
+```
+
+Steps, in this order:
+
+1. **Read any JSON.** A JSON array becomes the components (SPDX: packages); an object without `bomFormat`/`spdxVersion` is
+   CycloneDX (or `--spec`); a missing or unknown version becomes 1.6 / 2.3 (or `--version`); CycloneDX 1.8+ goes to 1.7
+   with the future hop. Only invalid JSON syntax and SPDX 3.0 are refused (exit 2).
+2. **Derive required fields first** (so nothing is dropped), then run the `fix` repair and sanitize rules at that version
+   (wrong case, wrong types, bad dates, licence shapes, bad hashes, unknown fields). Never a downgrade.
+3. **Fill** each missing field, in this order of preference: `derived` from the SBOM (purl → name/version/group, bom-ref →
+   purl, publisher ↔ supplier, hash length → alg, evidence → licenses/copyright, purl qualifiers → externalReferences,
+   file name → root component, one dependency entry per component), `standard` (SPDX `NOASSERTION`, `CC0-1.0`),
+   the schema `default`, an allowed `enum` value (`unknown`/`other` first), else a `dummy` that is obviously a placeholder:
+   `PLACEHOLDER-<field>`, `https://placeholder.invalid/`, `placeholder@example.invalid`, `0`, `false`.
+4. **Coerce** values the schema still rejects: convert when the meaning is clear (`"no"` → `false`, `"42"` → `42`, a bare
+   string where an object is expected → `{"name": ...}`), otherwise remove and fill again. Additions that would make the
+   document invalid are rolled back.
+
+Never invented (only derived): identity fields (`purl`, `cpe`, `swid`, `omniborId`, `swhid`, SPDX `externalRefs`) and
+references to other elements (`ref`, `dependsOn`, `assemblies`, relationships). A dummy purl would be scanned as a real
+package. `fill-all` does not expand deprecated fields or recursive structures (components inside new components); objects
+created deeper than 4 levels get only their required fields.
+
+Outputs: `<name>.fill-<required|all>.<cdx|spdx>.json` and `<name>.fill-<required|all>.<cdx|spdx>.report.json` with
+`prepared` (how the input was read), `repairs` (fix rules applied), `removed_invalid` (converted or removed values),
+`fills` (every added field with its source), `skipped` and `unresolved_required`. Exit 0 = schema-valid output, 1 = some
+errors could not be resolved (see the report), 2 = not JSON / unsupported format.
 
 ## Outputs
 
@@ -95,7 +134,7 @@ For `out/<name>.<profile>.*`:
 
 ## Profiles
 
-Built in: `checkmarx` (web portal), `checkmarx-cli` (cx CLI, CycloneDX up to 1.6) and `compliance` (`sbom_fixer/data/profiles/`). Pass a YAML path to use your own.
+Built in: `checkmarx` (web portal), `checkmarx-cli` (cx CLI / Jenkins, same versions) and `compliance` (`sbom_fixer/data/profiles/`). Pass a YAML path to use your own.
 
 ```yaml
 name: checkmarx
@@ -145,7 +184,7 @@ Only needed for `verify`, `bisect`, `--verify` and `--verify-each-step`. The `cx
 
 ```bash
 python tools/make_corpus.py          # regenerate corpus/ and corpus/expected.yaml
-.venv/Scripts/pytest                 # 248 tests, about 30 seconds
+.venv/Scripts/pytest                 # 308 tests, about 35 seconds
 .venv/Scripts/ruff check sbom_fixer tests tools
 .venv/Scripts/mypy sbom_fixer
 python tools/vendor_schemas.py       # only when upgrading schemas; commit with schemas/SOURCES.md
