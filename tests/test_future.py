@@ -45,7 +45,7 @@ def capped_cli(top: str = "1.6") -> Profile:
     order = ["1.3", "1.4", "1.5", "1.6", "1.7"]
     return parse_profile({"name": "cli-capped", "cyclonedx": {"floor": "1.3", "accepted_versions": order[:order.index(top) + 1],
                                                               "max_version": "1.7", "future_versions": "downgrade"},
-                          "provenance": False})
+                          "provenance": False, "allow_downgrade": True})
 
 
 @pytest.mark.parametrize("profile_name", ["checkmarx", "checkmarx-cli", "compliance"])

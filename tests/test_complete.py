@@ -258,3 +258,60 @@ def test_cli_fill_rejects_non_json(tmp_path: Path) -> None:
     src.write_text("{not json", encoding="utf-8")
     res = CliRunner().invoke(app, ["fill-required", str(src), "--out", str(tmp_path)])
     assert res.exit_code == 2 and "not valid JSON" in res.output
+
+
+@pytest.mark.parametrize("rel", ["minimal/min-cdx-1.5.json", "minimal/min-cdx-1.6.json", "minimal/min-cdx-1.7.json",
+                                 "minimal/min-spdx-2.3.json"])
+def test_fill_all_output_survives_fix_unchanged_version(rel: str) -> None:
+    """fill-all output must stay valid after the fix rules (no empty containers for SAN-002 to strip)."""
+    from sbom_fixer.changes import ChangeLog
+    from sbom_fixer.descent import process_level
+    from sbom_fixer.profile import load_profile
+    from sbom_fixer.rules import Ctx
+
+    doc = json.loads((CORPUS / rel).read_text(encoding="utf-8"))
+    spec = "spdx" if "spdxVersion" in doc else "cyclonedx"
+    version = doc["spdxVersion"].removeprefix("SPDX-") if spec == "spdx" else doc["specVersion"]
+    out = run_fill(doc, "all", spec=spec, version=version).doc
+
+    def no_empty(node: Any) -> bool:
+        if isinstance(node, dict):
+            return all(v not in ({}, []) or k in ("dependsOn",) for k, v in node.items()) and all(map(no_empty, node.values()))
+        if isinstance(node, list):
+            return all(x not in ({}, []) for x in node) and all(map(no_empty, node))
+        return True
+
+    original_empty = not no_empty(doc)
+    assert original_empty or no_empty(out)
+    log = ChangeLog(level=version)
+    ctx = Ctx(log=log, spec=spec, version=version, declared=version, profile=load_profile("checkmarx"), source_sha256=SHA)
+    ctx._doc = out
+    assert process_level(out, ctx) == []
+
+
+def test_large_report_is_grouped(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sbom_fixer import complete
+
+    monkeypatch.setattr(complete, "REPORT_DETAIL_LIMIT", 10)
+    res = run_fill(broken_cdx(), "all")
+    report = res.to_dict()
+    assert "fills" not in report and report["fills_grouped"]
+    total = sum(g["count"] for g in report["fills_grouped"])
+    assert total == len(res.fills)
+    assert any(g["path_pattern"].startswith("/components/*/") for g in report["fills_grouped"])
+
+
+def test_progress_lines_when_forced(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SBOM_FIXER_PROGRESS", "1")
+    src = tmp_path / "svc.cdx.json"
+    src.write_text(json.dumps(broken_cdx()), encoding="utf-8")
+    res = CliRunner().invoke(app, ["fill-required", str(src), "--out", str(tmp_path / "o")])
+    assert res.exit_code == 0 and "reading" in res.output and "done" in res.output
+    res = CliRunner().invoke(app, ["fix", str(CORPUS / "minimal" / "min-cdx-1.6.json"), "--out", str(tmp_path / "f"), "--no-audit"])
+    assert res.exit_code == 0 and "version path 1.6" in res.output and "done, exit code 0" in res.output
+
+
+def test_no_progress_for_small_files_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("SBOM_FIXER_PROGRESS", raising=False)
+    res = CliRunner().invoke(app, ["fix", str(CORPUS / "minimal" / "min-cdx-1.6.json"), "--out", str(tmp_path), "--no-audit"])
+    assert res.exit_code == 0 and "version path" not in res.output

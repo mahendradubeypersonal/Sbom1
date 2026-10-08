@@ -1,6 +1,7 @@
 # Checkmarx fix: CycloneDX 1.6/1.7 support, 1.8+ downgrade, PURL types, https purls, default tool
 
-> Status: **Implemented** (tests: `tests/test_purl_checkmarx.py`, `tests/test_future.py`, `corpus/future/`, `corpus/purl/`)
+> Status: **Implemented**. Update 2026-10-06: `fix` never downgrades by default (same-version fix with COERCE-001/002); stepping down needs `--allow-downgrade`. Where this doc says "`--accepted ... 1.6`", add `--allow-downgrade`.
+>  (tests: `tests/test_purl_checkmarx.py`, `tests/test_future.py`, `corpus/future/`, `corpus/purl/`)
 > Date: 2026-10-05
 > Owner: sbom-fixer
 > Related: `docs/checkmarx-sbom-upload-failures.md`, `docs/checkmarx-matrix.md`, `docs/rule-catalog.md`, `sbom_fixer/data/profiles/checkmarx.yaml`, `checkmarx-cli.yaml`
@@ -162,7 +163,7 @@ Validation (`profile.py`): `max_version` vendored list mein hona chahiye; `futur
 | Scenario | Kya karein |
 |---|---|
 | Portal 1.7 accept karta hai (SBOM Reports page) | `checkmarx` profile jaisa hai |
-| Portal 1.7 reject karta hai (Scanning SBOMs page: 1.0–1.6) | `--accepted 1.3,1.4,1.5,1.6` (ek run), ya profile se 1.7 hatao |
+| Portal 1.7 reject karta hai (Scanning SBOMs page: 1.0–1.6) | `--allow-downgrade --accepted 1.3,1.4,1.5,1.6` (ek run), ya profile se 1.7 hatao |
 | `cx` CLI / Jenkins / GitHub Action | `checkmarx-cli` (1.7 bhi rakhta hai). CLI 1.7 reject kare to Jenkins fix command mein `--accepted 1.3,1.4,1.5,1.6` jodo |
 
 Matrix (`docs/checkmarx-matrix.md`) mein `min-cdx-1.7.json` ki row bharne ke baad hi 1.7 ko pakka maano.

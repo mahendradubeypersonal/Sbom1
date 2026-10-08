@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sbom-fixer"
 version = "1.0.0"
-description = "Repair SBOMs at their declared version, step down one version at a time only when needed, and explain every change."
+description = "Repair SBOMs on their own schema version (never a downgrade unless asked), fill missing fields, and explain every change."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }

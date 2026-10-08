@@ -31,7 +31,7 @@ def test_cli_check_is_read_only(tmp_path: Path) -> None:
 
 
 def test_cli_check_accepted_override() -> None:
-    res = runner.invoke(app, ["check", str(CORPUS / "minimal" / "min-cdx-1.5.json"), "--accepted", "1.4"])
+    res = runner.invoke(app, ["check", str(CORPUS / "minimal" / "min-cdx-1.5.json"), "--accepted", "1.4", "--allow-downgrade"])
     assert res.exit_code == 1 and "level 1.4  : ACCEPTED" in res.output
 
 

@@ -59,22 +59,68 @@ NOASSERTION_FIELDS = {"downloadLocation", "licenseConcluded", "licenseDeclared",
 
 @dataclass
 class Fill:
-    path: str
+    parts: tuple[Any, ...]  # JSON Pointer as a tuple; the string is built only for the report (large files)
     value: Any
     source: str  # derived:<how> | standard | default | example | enum | dummy | container
 
-    def to_dict(self) -> dict[str, Any]:
+    @property
+    def path(self) -> str:
+        return pointer(self.parts)
+
+    def shown(self) -> Any:
         if self.source == "container":  # its fields are listed as their own entries
-            shown: Any = f"[{len(self.value)} item(s)]" if isinstance(self.value, list) else "{object}"
-            return {"path": self.path, "source": self.source, "value": shown}
+            return f"[{len(self.value)} item(s)]" if isinstance(self.value, list) else "{object}"
         text = json.dumps(self.value, ensure_ascii=False, default=str)
-        return {"path": self.path, "source": self.source, "value": self.value if len(text) <= 200 else text[:200] + "..."}
+        return self.value if len(text) <= 200 else text[:200] + "..."
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"path": self.path, "source": self.source, "value": self.shown()}
 
 
 @dataclass
 class Skip:
-    path: str
+    parts: tuple[Any, ...]
     reason: str
+
+    @property
+    def path(self) -> str:
+        return pointer(self.parts)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"path": self.path, "reason": self.reason}
+
+
+REPORT_DETAIL_LIMIT = 5000  # above this many entries, the report groups them by path pattern
+
+
+def _pattern(parts: tuple[Any, ...]) -> str:
+    return pointer("*" if isinstance(x, int) else x for x in parts)
+
+
+def _grouped_fills(fills: list[Fill]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[Any]] = {}
+    for f in fills:
+        key = (_pattern(f.parts), f.source)
+        g = groups.get(key)
+        if g is None:
+            groups[key] = [1, f]
+        else:
+            g[0] += 1
+    return [{"path_pattern": k[0], "source": k[1], "count": v[0], "example_path": v[1].path, "example_value": v[1].shown()}
+            for k, v in sorted(groups.items(), key=lambda kv: -kv[1][0])]
+
+
+def _grouped_skips(skips: list[Skip]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[Any]] = {}
+    for sk in skips:
+        key = (_pattern(sk.parts), sk.reason)
+        g = groups.get(key)
+        if g is None:
+            groups[key] = [1, sk]
+        else:
+            g[0] += 1
+    return [{"path_pattern": k[0], "reason": k[1], "count": v[0], "example_path": v[1].path}
+            for k, v in sorted(groups.items(), key=lambda kv: -kv[1][0])]
 
 
 @dataclass
@@ -100,12 +146,23 @@ class FillResult:
         return out
 
     def to_dict(self) -> dict[str, Any]:
-        return {"spec": self.spec, "version": self.version, "mode": self.mode, "counts": self.counts(),
-                "schema_errors_before": self.errors_before, "schema_errors_after": self.errors_after,
-                "prepared": self.prepared, "repairs": self.repairs,
-                "removed_invalid": [f.to_dict() for f in self.removed],
-                "fills": [f.to_dict() for f in self.fills], "skipped": [s.__dict__ for s in self.skipped],
-                "unresolved_required": [s.__dict__ for s in self.unresolved]}
+        out: dict[str, Any] = {
+            "spec": self.spec, "version": self.version, "mode": self.mode, "counts": self.counts(),
+            "schema_errors_before": self.errors_before, "schema_errors_after": self.errors_after,
+            "prepared": self.prepared, "repairs": self.repairs,
+            "removed_invalid": [f.to_dict() for f in self.removed],
+            "unresolved_required": [x.to_dict() for x in self.unresolved]}
+        if len(self.fills) > REPORT_DETAIL_LIMIT:
+            out["fills_grouped"] = _grouped_fills(self.fills)
+            out["fills_note"] = (f"{len(self.fills)} fields added; grouped by path pattern (* = any index) because there "
+                                 f"are more than {REPORT_DETAIL_LIMIT}")
+        else:
+            out["fills"] = [f.to_dict() for f in self.fills]
+        if len(self.skipped) > REPORT_DETAIL_LIMIT:
+            out["skipped_grouped"] = _grouped_skips(self.skipped)
+        else:
+            out["skipped"] = [x.to_dict() for x in self.skipped]
+        return out
 
 
 def _def_name(schema: Any) -> str | None:
@@ -148,26 +205,35 @@ class Filler:
         self.added: list[tuple[Any, ...]] = []
         self.refs = self._existing_refs()
         self.counter = 0
+        self.progress: Any = lambda _msg: None
+        # identity-checked caches: (schema object, result) keyed by id(), safe against id reuse
+        self._cache_resolve: dict[int, tuple[Any, Any]] = {}
+        self._cache_name: dict[int, tuple[Any, Any]] = {}
+        self._cache_targets: dict[tuple[int, bool], tuple[Any, list[str]]] = {}
+        self._cache_branch: dict[tuple[int, int], tuple[Any, Any, dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------ entry
 
     def run(self, errors_before: int | None = None) -> FillResult:
         self.result.errors_before = (len(validate(self.doc, self.spec, self.version)) if errors_before is None
                                      else errors_before)
+        self.progress(f"filling fields (mode {self.mode})")
         self.visit(self.doc, self.root, (), (), 0, is_new=False)
-        self._rollback_invalid()
-        for _ in range(6):  # existing values the schema rejects: remove them, then fill the gap again
-            if not self._coerce_existing():
+        self.progress(f"{len(self.result.fills):,} fields added; checking the result against the {self.spec} "
+                      f"{self.version} schema")
+        issues = self._rollback_invalid()
+        for _ in range(6):  # existing values the schema rejects: convert or remove them, then fill the gap again
+            if not issues or not self._coerce_existing(issues):
                 break
+            self.progress(f"{len(issues):,} schema error(s) left: converting / replacing those values")
             self.visit(self.doc, self.root, (), (), 0, is_new=False)
-            self._rollback_invalid()
-        self.result.errors_after = len(validate(self.doc, self.spec, self.version))
+            issues = self._rollback_invalid()
+        self.result.errors_after = len(issues)
         return self.result
 
-    def _coerce_existing(self) -> bool:
-        """Remove each existing value a schema error points at (for a required field that could not be filled:
-        the object that misses it). Returns True when something was removed, so the gaps get filled again."""
-        issues = validate(self.doc, self.spec, self.version)
+    def _coerce_existing(self, issues: list[Any]) -> bool:
+        """Convert or remove each existing value a schema error points at (for a required field that could not be
+        filled: the object that misses it). Returns True when something changed, so the gaps get filled again."""
         targets: dict[tuple[Any, ...], Any] = {}
         for issue in issues:
             parts = tuple(issue.parts)
@@ -185,11 +251,11 @@ class Filler:
             converted = _convert(old, issue.expected) if issue.keyword == "type" else NONE
             if converted is not NONE:
                 container[parts[-1]] = converted
-                self.result.removed.append(Fill(pointer(parts), {"before": old, "after": copy.deepcopy(converted)},
+                self.result.removed.append(Fill(parts, {"before": old, "after": copy.deepcopy(converted)},
                                                 f"converted: {issue.message[:120]}"))
             else:
                 container.pop(parts[-1])
-                self.result.removed.append(Fill(pointer(parts), old, f"removed: {issue.keyword}: {issue.message[:120]}"))
+                self.result.removed.append(Fill(parts, old, f"removed: {issue.keyword}: {issue.message[:120]}"))
             removed = True
         if removed:
             self.refs = self._existing_refs()
@@ -226,22 +292,41 @@ class Filler:
                 return cand
 
     def _resolve(self, schema: Any) -> dict[str, Any] | None:
-        return resolve_local(schema, self.root) if isinstance(schema, dict) else None
+        if not isinstance(schema, dict):
+            return None
+        if "$ref" not in schema:
+            return schema
+        hit = self._cache_resolve.get(id(schema))
+        if hit is not None and hit[0] is schema:
+            return hit[1]
+        resolved = resolve_local(schema, self.root)
+        self._cache_resolve[id(schema)] = (schema, resolved)
+        return resolved
+
+    def _name(self, schema: Any) -> str | None:
+        if not isinstance(schema, dict):
+            return None
+        hit = self._cache_name.get(id(schema))
+        if hit is not None and hit[0] is schema:
+            return hit[1]
+        name = _def_name(schema)
+        self._cache_name[id(schema)] = (schema, name)
+        return name
 
     def _record(self, parts: tuple[Any, ...], value: Any, source: str) -> None:
         self.added.append(parts)
-        self.result.fills.append(Fill(pointer(parts), value, source))
+        self.result.fills.append(Fill(parts, value, source))
 
     def _skip(self, parts: tuple[Any, ...], reason: str, required: bool, is_new: bool = False) -> None:
         """A required field of an EXISTING object that stays missing is unresolved; inside a new object it only
         means the new object is dropped again, which is a plain skip."""
         target = self.result.unresolved if (required and not is_new) else self.result.skipped
-        target.append(Skip(pointer(parts), reason + (" (so the new object was not added)" if required and is_new else "")))
+        target.append(Skip(parts, reason + (" (so the new object was not added)" if required and is_new else "")))
 
     def _blocked(self, key: str, prop: dict[str, Any]) -> str | None:
         if key in IDENTITY_KEYS[self.spec]:
             return "identity field: only derived, never a placeholder"
-        if key in REF_KEYS or _def_name(prop) in REF_DEFINITIONS:
+        if key in REF_KEYS or self._name(prop) in REF_DEFINITIONS:
             return "reference to another element: only derived, never a placeholder"
         if not self.include_sensitive and key in SENSITIVE_KEYS[self.spec]:
             return "sensitive field (use --include-sensitive to add placeholders)"
@@ -252,7 +337,7 @@ class Filler:
     def visit(self, node: Any, schema: Any, parts: tuple[Any, ...], stack: tuple[str, ...], new_level: int,
               is_new: bool) -> bool:
         """Fill node in place. Returns False when a required field of a NEW node could not be produced."""
-        name = _def_name(schema)
+        name = self._name(schema)
         schema = self._resolve(schema)
         if schema is None:
             return True
@@ -275,7 +360,7 @@ class Filler:
                 return ok if picked is None else self.visit(node, picked, parts, stack, new_level, is_new) and ok
             items = self._resolve(schema.get("items"))
             if items is not None:
-                item_name = _def_name(schema.get("items"))
+                item_name = self._name(schema.get("items"))
                 for i, item in enumerate(node):
                     ok = self.visit(item, schema["items"] if item_name else items, (*parts, i), stack, new_level,
                                     is_new) and ok
@@ -293,34 +378,52 @@ class Filler:
             if chosen is None:
                 chosen = next((b for b in resolved if all(self._can_make(schema["properties"].get(k)) for k in
                                                            b.get("required", []))), resolved[0] if resolved else {})
+            key = (id(schema), id(chosen))
+            hit = self._cache_branch.get(key)
+            if hit is not None and hit[0] is schema and hit[1] is chosen:
+                return hit[2]
             others = set().union(*(set(b.get("required", [])) for b in resolved if b is not chosen)) - set(
                 chosen.get("required", []))
             merged = dict(schema)
             merged["required"] = list(dict.fromkeys([*schema.get("required", []), *chosen.get("required", [])]))
             merged["properties"] = {k: v for k, v in schema["properties"].items() if k not in others}
+            self._cache_branch[key] = (schema, chosen, merged)
             return merged
         picked = _branch_for(node, branches, self.root) if node else None
         if picked is None and not node:
             picked = next((b for b in resolved if b.get("type") == "object" or "properties" in b), None)
         if picked is None:
             return schema if "properties" in schema else None
+        key = (id(schema), id(picked))
+        hit = self._cache_branch.get(key)
+        if hit is not None and hit[0] is schema and hit[1] is picked:
+            return hit[2]
         merged = dict(picked)
         if "properties" in schema:
             merged["properties"] = {**schema["properties"], **picked.get("properties", {})}
             merged["required"] = list(dict.fromkeys([*schema.get("required", []), *picked.get("required", [])]))
+        self._cache_branch[key] = (schema, picked, merged)
         return merged
 
     def _can_make(self, prop: Any) -> bool:
         return prop is not None and self._make(prop, ("?",), "?", 0) is not NONE
 
     def _targets(self, schema: dict[str, Any], new_level: int) -> list[str]:
+        only_required = self.mode == "required" or new_level > MAX_NEW_DEPTH
+        key = (id(schema), only_required)
+        hit = self._cache_targets.get(key)
+        if hit is not None and hit[0] is schema:
+            return hit[1]
         props = schema.get("properties") or {}
         required = [k for k in schema.get("required", []) if k in props]
-        if self.mode == "required" or new_level > MAX_NEW_DEPTH:
-            return required
-        rest = [k for k, v in props.items() if k not in required and not _deprecated(self._resolve(v) or {})]
-        deferred = [k for k in rest if k in ("dependencies", "compositions")]
-        return required + [k for k in rest if k not in deferred] + deferred
+        if only_required:
+            result = required
+        else:
+            rest = [k for k, v in props.items() if k not in required and not _deprecated(self._resolve(v) or {})]
+            deferred = [k for k in rest if k in ("dependencies", "compositions")]
+            result = required + [k for k in rest if k not in deferred] + deferred
+        self._cache_targets[key] = (schema, result)
+        return result
 
     def _fill_object(self, node: dict[str, Any], whole: dict[str, Any], schema: dict[str, Any], parts: tuple[Any, ...],
                      stack: tuple[str, ...], new_level: int, is_new: bool) -> bool:
@@ -349,7 +452,7 @@ class Filler:
                 self._skip(kparts, blocked, is_req, is_new)
                 complete = complete and not (is_req and is_new)
                 continue
-            if _def_name(prop) in stack:
+            if self._name(prop) in stack:
                 self._skip(kparts, "recursive structure (not expanded)", is_req, is_new)
                 complete = complete and not (is_req and is_new)
                 continue
@@ -362,9 +465,16 @@ class Filler:
             node[key] = value
             if isinstance(value, (dict, list)):
                 built = self.visit(value, prop, kparts, stack, new_level + 1, is_new=True)
-                if not built or (isinstance(value, list) and not value and self._min_items(prop) > 0):
+                if isinstance(value, list):
+                    # empty new items carry no information, and `fix` (SAN-002) would strip them anyway, which can
+                    # leave a oneOf parent (e.g. dataGovernanceResponsibleParty: organization XOR contact) invalid
+                    value[:] = [x for x in value if x not in ({}, [])]
+                empty_object = isinstance(value, dict) and not value
+                if not built or empty_object or (isinstance(value, list) and not value and self._min_items(prop) > 0):
                     del node[key]
-                    self._skip(kparts, "a required part of it could not be produced", is_req, is_new)
+                    reason = ("nothing could be filled inside it (an empty object adds nothing)" if empty_object and built
+                              else "a required part of it could not be produced")
+                    self._skip(kparts, reason, is_req, is_new)
                     complete = complete and not (is_req and is_new)
                     continue
                 if isinstance(value, list) and not value and self.mode == "all":
@@ -608,35 +718,45 @@ class Filler:
 
     # ------------------------------------------------------------------ rollback
 
-    def _rollback_invalid(self) -> None:
-        """Remove every addition that a schema error points into (or that sits under an object now in error)."""
+    def _rollback_invalid(self) -> list[Any]:
+        """Remove every addition that a schema error points into (or that sits under an object now in error).
+
+        Returns the schema issues that remain (none of them inside an addition)."""
+        issues: list[Any] = []
         for _ in range(10):
             issues = validate(self.doc, self.spec, self.version)
-            if not issues:
-                return
+            if not issues or not self.added:
+                return issues
+            added = set(self.added)
             doomed: set[tuple[Any, ...]] = set()
-            live = [a for a in self.added if self._exists(a)]
+            needs_under: set[tuple[Any, ...]] = set()
             for issue in issues:
                 ip = tuple(issue.parts)
-                inside = [a for a in live if ip[:len(a)] == a]
-                if inside:
-                    doomed.add(min(inside, key=len))
-                    continue
-                under = [a for a in live if a[:len(ip)] == ip]
-                doomed.update(under)
+                inside = next((ip[:n] for n in range(1, len(ip) + 1) if ip[:n] in added), None)
+                if inside is not None:
+                    doomed.add(inside)
+                else:
+                    needs_under.add(ip)
+            if needs_under:  # an existing object in error: drop what was added below it
+                for a in added:
+                    if any(a[:n] in needs_under for n in range(len(a))):
+                        doomed.add(a)
             if not doomed:
-                return
+                return issues
             for a in sorted(doomed, key=len, reverse=True):
                 if not self._exists(a):
                     continue
                 container = self._get(a[:-1])
                 if isinstance(container, dict):
                     container.pop(a[-1], None)
-                    self.result.skipped.append(Skip(pointer(a), "removed again: made the document schema-invalid"))
-            gone = {pointer(a) for a in doomed}
-            self.result.fills = [f for f in self.result.fills
-                                 if not any(f.path == g or f.path.startswith(g + "/") for g in gone)]
-            self.added = [a for a in self.added if self._exists(a)]
+                    self.result.skipped.append(Skip(a, "removed again: made the document schema-invalid"))
+
+            def gone(parts: tuple[Any, ...], doomed: set[tuple[Any, ...]] = doomed) -> bool:
+                return any(parts[:n] in doomed for n in range(1, len(parts) + 1))
+
+            self.result.fills = [f for f in self.result.fills if not gone(f.parts)]
+            self.added = [a for a in self.added if not gone(a)]
+        return issues
 
     def _get(self, parts: tuple[Any, ...]) -> Any:
         node: Any = self.doc
@@ -673,9 +793,11 @@ def _convert(value: Any, expected: Any) -> Any:
 
 def fill(doc: dict[str, Any], spec: str, version: str, mode: str, *, file_stem: str, source_sha256: str,
          now: datetime | None = None, include_sensitive: bool = False, repair: bool = True,
-         prepared: list[str] | None = None) -> FillResult:
+         prepared: list[str] | None = None, progress: Any = None) -> FillResult:
     """Repair at the version (same rules as `fix`, never a downgrade), then fill and coerce to the schema."""
+    say = progress or (lambda _msg: None)
     work = copy.deepcopy(doc)
+    say(f"validating against {spec} {version}")
     errors_before = len(validate(work, spec, version))
     repairs: list[dict[str, Any]] = []
     early: list[Fill] = []
@@ -684,11 +806,13 @@ def fill(doc: dict[str, Any], spec: str, version: str, mode: str, *, file_stem: 
         # derive the required fields first, so a repair rule does not drop an entry the SBOM can still complete
         # (REP-006 removes a component without a name, although its purl / bom-ref names it)
         pre = Filler(work, spec, version, "required", file_stem=file_stem, now=when, source_sha256=source_sha256)
+        say(f"{errors_before:,} schema error(s): deriving required fields, then the fix repair rules")
         pre.visit(work, pre.root, (), (), 0, is_new=False)
         early = pre.result.fills
         repairs = repair_same_version(work, spec, version, source_sha256)
     filler = Filler(work, spec, version, mode, file_stem=file_stem, now=when,
                     source_sha256=source_sha256, include_sensitive=include_sensitive)
+    filler.progress = say
     result = filler.run(errors_before)
     result.fills = early + result.fills
     result.repairs = repairs

@@ -25,12 +25,20 @@ from .pipeline import (
 from .profile import Profile, load_profile, parse_profile
 from .validate import group
 
+ALLOW_DOWNGRADE_HELP = ("Allow stepping down one version at a time (e.g. 1.7 -> 1.6) when the file is not valid or not "
+                        "accepted at its own version. Off by default: fix repairs on the file's own schema.")
+
 app = typer.Typer(add_completion=False, no_args_is_help=True,
-                  help="Repair SBOMs at their declared version, step down one version only when needed, and explain every change.")
+                  help="Repair SBOMs on their own schema version (never a downgrade unless asked) and explain every change.")
 
 
-def _profile(name: str, accepted: str | None = None, floor: str | None = None) -> Profile:
+def _profile(name: str, accepted: str | None = None, floor: str | None = None,
+             allow_downgrade: bool = False) -> Profile:
     prof = load_profile(name)
+    if allow_downgrade:
+        import dataclasses
+
+        prof = dataclasses.replace(prof, allow_downgrade=True)
     if accepted or floor:
         import dataclasses
 
@@ -66,10 +74,11 @@ def check(
     file: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="SBOM file")],
     profile: Annotated[str, typer.Option("--profile", "-p", help="Profile name or YAML path")] = "checkmarx",
     accepted: Annotated[str | None, typer.Option(help="Override cyclonedx accepted_versions, e.g. 1.3,1.4,1.5,1.6,1.7")] = None,
+    allow_downgrade: Annotated[bool, typer.Option("--allow-downgrade", help=ALLOW_DOWNGRADE_HELP)] = False,
 ) -> None:
-    """Read-only diagnosis: own-version errors grouped by cause and the version path a fix would take."""
+    """Read-only diagnosis: own-version errors grouped by cause and what a fix would do."""
     try:
-        prof = _profile(profile, accepted)
+        prof = _profile(profile, accepted, allow_downgrade=allow_downgrade)
         r = run_fix(file, prof, write=False, audit=False)
     except SbomFixerError as exc:
         typer.echo(f"error: {exc}", err=True)
@@ -94,8 +103,9 @@ def fix(
     max_uploads: Annotated[int, typer.Option(help="Upload budget for --verify-each-step")] = 6,
     no_audit: Annotated[bool, typer.Option("--no-audit", help="Skip the NTIA / sbomqs quality audit")] = False,
     accepted: Annotated[str | None, typer.Option(help="Override cyclonedx accepted_versions, e.g. 1.3,1.4,1.5,1.6,1.7")] = None,
+    allow_downgrade: Annotated[bool, typer.Option("--allow-downgrade", help=ALLOW_DOWNGRADE_HELP)] = False,
 ) -> None:
-    """Fix SBOMs: repair at the declared version, descend only when needed, write SBOM, diff, notes and quality report."""
+    """Fix SBOMs on their own schema version (never a downgrade unless --allow-downgrade); write SBOM, diff, notes, quality."""
     worst = EXIT_OK
     client = None
     if verify_each_step or acceptance == "checkmarx" or verify_output:
@@ -107,7 +117,7 @@ def fix(
     for f in files:
         for pname in profile:
             try:
-                prof = _profile(pname, accepted)
+                prof = _profile(pname, accepted, allow_downgrade=allow_downgrade)
                 r = run_fix(f, prof, out, acceptance=mode, client=client, max_uploads=max_uploads, audit=not no_audit)
             except SbomFixerError as exc:
                 typer.echo(f"error: {exc}", err=True)
@@ -168,12 +178,15 @@ def _fill(file: Path, out: Path | None, mode: str, include_sensitive: bool, spec
 
     from .complete import fill, prepare_input, render_summary
     from .pipeline import output_stem
+    from .progress import for_input, size_text
     from .serialize import write_json, write_text
 
     if spec is not None and spec not in ("cyclonedx", "spdx"):
         typer.echo("error: --spec must be cyclonedx or spdx", err=True)
         raise typer.Exit(EXIT_CANNOT_FIX)
     raw = file.read_bytes()
+    progress = for_input(len(raw))
+    progress(f"{file.name}: reading ({size_text(len(raw))})")
     try:
         doc, use_spec, use_version, notes = prepare_input(raw, spec, version)
     except SbomFixerError as exc:
@@ -181,15 +194,22 @@ def _fill(file: Path, out: Path | None, mode: str, include_sensitive: bool, spec
         raise typer.Exit(EXIT_CANNOT_FIX) from None
     stem = output_stem(file)
     res = fill(doc, use_spec, use_version, mode, file_stem=stem, source_sha256=hashlib.sha256(raw).hexdigest(),
-               include_sensitive=include_sensitive, prepared=notes)
+               include_sensitive=include_sensitive, prepared=notes, progress=progress)
     out_dir = out or file.parent
     ext = "cdx" if use_spec == "cyclonedx" else "spdx"
     sbom_path = out_dir / f"{stem}.fill-{mode}.{ext}.json"
     report_path = out_dir / f"{stem}.fill-{mode}.{ext}.report.json"
+    progress(f"writing {sbom_path.name}")
     write_json(res.doc, sbom_path)
+    progress(f"writing {report_path.name}")
     report = {"input": file.name, **res.to_dict()}
     write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str) + "\n", report_path)
+    progress("done")
     typer.echo(render_summary(file.name, res, {"sbom": str(sbom_path), "report": str(report_path)}))
+    out_size = sbom_path.stat().st_size
+    if mode == "all" and out_size > 10 * len(raw):
+        typer.echo(f"  note          : output is {out_size / max(len(raw), 1):.0f}x the input ({size_text(out_size)}). "
+                   "fill-all shows every schema field; for a Checkmarx upload use fill-required (+ fix).")
     raise typer.Exit(EXIT_OK if res.errors_after == 0 else 1)
 
 

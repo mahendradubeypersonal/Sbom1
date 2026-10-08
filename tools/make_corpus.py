@@ -143,10 +143,10 @@ def build() -> None:
 
     future_and_purl_cases()
 
-    # Below the floor (1.2) and unsupported formats -> exit 2
+    # CycloneDX 1.2 is fixed on its own schema (fix never downgrades or upgrades); unsupported formats -> exit 2
     old = minimal("1.3")
     old["specVersion"] = "1.2"
-    case("unsupported", "legacy-1.2.cdx.json", old, {"exit_code": 2})
+    case("unsupported", "legacy-1.2.cdx.json", old, {"exit_code": 0, "final_version": "1.2", "version_path": ["1.2"]})
     case("unsupported", "spdx3.jsonld", {"@context": "https://spdx.org/rdf/3.0.1/spdx-context.jsonld", "@graph": []}, {"exit_code": 2})
     case("unsupported", "bom.xml", None, {"exit_code": 2},
          raw=b'<?xml version="1.0"?>\n<bom xmlns="http://cyclonedx.org/schema/bom/1.5" version="1"/>\n')

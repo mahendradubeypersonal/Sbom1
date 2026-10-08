@@ -19,6 +19,7 @@ from .diff import human_diff, machine_diff
 from .errors import DetectError, SbomFixerError
 from .oracle import AcceptanceClient, oracle_for
 from .profile import Profile
+from .progress import for_input, size_text
 from .purlmap import Coverage, classify, coverage_csv
 from .schemas import VERSION_ORDER
 from .serialize import dumps, write_json, write_text
@@ -78,7 +79,7 @@ def output_stem(input_path: Path) -> str:
 
 def run_fix(input_path: Path, profile: Profile, out_dir: Path | None = None, *, acceptance: str | None = None,
             client: AcceptanceClient | None = None, max_uploads: int = 6, audit: bool = True, write: bool = True,
-            dry_run: bool = False) -> RunResult:
+            dry_run: bool = False, progress: Any = None) -> RunResult:
     raw = input_path.read_bytes()
     sha = hashlib.sha256(raw).hexdigest()
     mode = acceptance or profile.acceptance
@@ -87,6 +88,8 @@ def run_fix(input_path: Path, profile: Profile, out_dir: Path | None = None, *, 
     out_dir = out_dir or input_path.parent
 
     try:
+        progress = progress or for_input(len(raw))
+        progress(f"{input_path.name}: reading ({size_text(len(raw))}), profile {profile.name}")
         detected, doc = detect(raw)
     except DetectError as exc:
         result.error = str(exc)
@@ -102,6 +105,7 @@ def run_fix(input_path: Path, profile: Profile, out_dir: Path | None = None, *, 
         log.add(issue.rule_id, "", "converted", detected.encoding, "utf-8 (no BOM)", INFO, issue.message)
 
     if detected.version in VERSION_ORDER[detected.spec]:
+        progress(f"validating against {detected.spec} {detected.version}")
         result.original_issues = validate(result.original_doc, detected.spec, detected.version)
 
     try:
@@ -117,7 +121,11 @@ def run_fix(input_path: Path, profile: Profile, out_dir: Path | None = None, *, 
     before_score = sbomqs_score(str(input_path)) if before_ntia is not None else None
 
     initial = result.original_issues if detected.version in VERSION_ORDER[detected.spec] else None
+    progress("repairing (and stepping down a version only if needed)")
     result.descent = descend(doc, detected.spec, detected.version, profile, oracle, log, sha, initial)
+    progress(f"version path {' -> '.join(result.descent.path)}: "
+             f"{'accepted ' + str(result.descent.final_version) if result.descent.ok else 'no level accepted'}, "
+             f"{len(log.changes):,} change(s)")
     if result.descent.ok:
         result.fixed_doc = doc
     ext = "cdx" if detected.spec == "cyclonedx" else "spdx"
@@ -131,6 +139,7 @@ def run_fix(input_path: Path, profile: Profile, out_dir: Path | None = None, *, 
             write_json(doc, sbom_path)
             result.outputs["sbom"] = str(sbom_path)
         if before_ntia is not None:
+            progress("quality audit (NTIA, sbomqs)")
             after_ntia = ntia_check(doc, detected.spec)
             after_score = sbomqs_score(str(sbom_path)) if (write and not dry_run) else None
             note = None
@@ -148,7 +157,9 @@ def run_fix(input_path: Path, profile: Profile, out_dir: Path | None = None, *, 
             result.coverage = classify(doc, detected.spec, profile.purl, log)
     result.exit_code = _exit_code(result)
     if write:
+        progress("writing reports (diff, change log, notes)")
         _write_reports(result, out_dir, stem, dry_run)
+    progress(f"done, exit code {result.exit_code}")
     return result
 
 
