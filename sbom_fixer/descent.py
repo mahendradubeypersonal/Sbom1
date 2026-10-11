@@ -11,6 +11,7 @@ from .profile import Profile
 from .prune import prune_to
 from .rules import Ctx, hop_rules, rule_by_id, rules_of
 from .rules.base import FINAL, REPAIR, SANITIZE, has_hop
+from .rules.canonical import CANONICAL
 from .rules.cdx_future import FUTURE_RULES
 from .schemas import VERSION_ORDER, is_future, schema_url, version_key
 from .validate import Issue, validate
@@ -168,6 +169,24 @@ def _final_rules(doc: dict[str, Any], spec: str, log: ChangeLog, ctx: Ctx, resul
             result.final_errors = post
             result.attempts[-1].reason += f"; {len(post)} errors after final rules"
             result.final_version = None
+            return
+    _canonical(doc, spec, log, ctx, result)
+
+
+def _canonical(doc: dict[str, Any], spec: str, log: ChangeLog, ctx: Ctx, result: DescentResult) -> None:
+    """Checkmarx canonical form (CXN-*), last step and only when the profile asks for it; never changes the version."""
+    canonical_rules = rules_of(CANONICAL, spec)
+    if ctx.profile.canonical is None or not canonical_rules:
+        return
+    for rule in canonical_rules:
+        rule.apply(doc, ctx)
+    post = validate(doc, spec, ctx.version)
+    if post:
+        post = coerce_to_schema(doc, spec, ctx.version, log)
+    if post:
+        result.final_errors = post
+        result.attempts[-1].reason += f"; {len(post)} errors after the canonical form"
+        result.final_version = None
 
 
 def _same_version(doc: dict[str, Any], spec: str, declared: str, version: str, oracle: Oracle, log: ChangeLog,

@@ -15,7 +15,7 @@ from sbom_fixer.schemas import is_future
 from sbom_fixer.serialize import write_json
 from sbom_fixer.validate import validate
 
-from .conftest import CORPUS, bom, ids, run
+from .conftest import CORPUS, bom, ids, repair_only, run
 
 
 def future_doc(version: str = "1.8", **comp_extra: Any) -> dict[str, Any]:
@@ -52,7 +52,7 @@ def capped_cli(top: str = "1.6") -> Profile:
 @pytest.mark.parametrize("version", ["1.6", "1.7"])
 def test_no_profile_downgrades_16_or_17(profile_name: str, version: str, tmp_path: Path) -> None:
     src = CORPUS / "minimal" / f"min-cdx-{version}.json"
-    r = run_fix(src, load_profile(profile_name), tmp_path, audit=False)
+    r = run_fix(src, repair_only(load_profile(profile_name)), tmp_path, audit=False)
     assert r.final_version == version and r.descent is not None and r.descent.path == [version], r.descent
     assert r.exit_code == 0
 
@@ -60,7 +60,7 @@ def test_no_profile_downgrades_16_or_17(profile_name: str, version: str, tmp_pat
 @pytest.mark.parametrize("rel", ["cdxgen/analytics.cdxgen.json", "cdxgen/crypto.cdx.json", "trivy/payments-api.trivy.json"])
 @pytest.mark.parametrize("profile_name", ["checkmarx", "checkmarx-cli"])
 def test_generator_files_keep_their_version(rel: str, profile_name: str, tmp_path: Path) -> None:
-    r = run_fix(CORPUS / rel, load_profile(profile_name), tmp_path, audit=False)
+    r = run_fix(CORPUS / rel, repair_only(load_profile(profile_name)), tmp_path, audit=False)
     assert r.final_version == r.declared and r.descent is not None and r.descent.path == [r.declared]
 
 
@@ -76,10 +76,12 @@ def test_cli_commands_keep_16_and_17(version: str, tmp_path: Path) -> None:
     runner = CliRunner()
     for profile_name in ("checkmarx", "checkmarx-cli"):
         res = runner.invoke(app, ["check", str(src), "-p", profile_name])
+        assert res.exit_code == 1 and f"level {version}  : ACCEPTED" in res.output, res.output  # 1: canonical form
+        res = runner.invoke(app, ["check", str(src), "-p", profile_name, "--no-canonical"])
         assert res.exit_code == 0 and f"level {version}  : ACCEPTED" in res.output, res.output
     res = runner.invoke(app, ["fix", str(src), "-p", "checkmarx", "-p", "checkmarx-cli", "-p", "compliance",
                               "--out", str(tmp_path), "--no-audit"])
-    assert res.exit_code == 0, res.output
+    assert res.exit_code == 1, res.output  # the checkmarx copies are rewritten to the canonical form
     for profile_name in ("checkmarx", "checkmarx-cli", "compliance"):
         out = json.loads((tmp_path / f"min-cdx-{version}.{profile_name}.cdx.json").read_text(encoding="utf-8"))
         assert out["specVersion"] == version
@@ -149,7 +151,7 @@ def test_future_hop_enum_without_other_is_removed(checkmarx: Profile) -> None:
 
 def test_future_hop_lands_on_17_for_every_checkmarx_profile() -> None:
     for name in ("checkmarx", "checkmarx-cli"):
-        _, res, _ = run(future_doc(newField18="v"), load_profile(name))
+        _, res, _ = run(future_doc(newField18="v"), repair_only(load_profile(name)))
         assert res.path == ["1.8", "1.7"] and res.final_version == "1.7", name
 
 
@@ -171,11 +173,11 @@ def test_major_2_refused(checkmarx: Profile) -> None:
 
 
 def test_future_end_to_end(tmp_path: Path) -> None:
-    r = run_fix(CORPUS / "future" / "min-cdx-1.8.json", load_profile("checkmarx"), tmp_path)
+    r = run_fix(CORPUS / "future" / "min-cdx-1.8.json", repair_only(load_profile("checkmarx")), tmp_path)
     assert r.exit_code == 1 and r.final_version == "1.7"
     notes = Path(r.outputs["notes"]).read_text(encoding="utf-8")
     assert "B (downgrade 1.8 -> 1.7)" in notes and "generic future hop to 1.7" in notes and "CDX-FWD-002" in notes
-    again = run_fix(Path(r.outputs["sbom"]), load_profile("checkmarx"), tmp_path / "again")
+    again = run_fix(Path(r.outputs["sbom"]), repair_only(load_profile("checkmarx")), tmp_path / "again")
     assert again.exit_code == 0
 
 

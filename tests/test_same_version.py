@@ -15,7 +15,7 @@ from sbom_fixer.pipeline import run_fix
 from sbom_fixer.profile import load_profile
 from sbom_fixer.validate import validate
 
-from .conftest import CORPUS, bom, ids, run
+from .conftest import CORPUS, bom, ids, repair_only, run
 
 
 def doc16(**component_extra: Any) -> dict[str, Any]:
@@ -28,7 +28,7 @@ def doc16(**component_extra: Any) -> dict[str, Any]:
 @pytest.mark.parametrize("profile_name", ["checkmarx", "checkmarx-cli", "compliance"])
 def test_unrepairable_error_is_fixed_on_the_same_version(profile_name: str) -> None:
     d = doc16(modified="no", externalReferences=[{"type": "not-a-real-type", "url": "https://example.org"}])
-    out, res, log = run(d, load_profile(profile_name))
+    out, res, log = run(d, repair_only(load_profile(profile_name)))
     assert res.ok and res.path == ["1.6"] and res.final_version == "1.6"
     assert validate(out, "cyclonedx", "1.6") == []
     assert out["components"][0]["modified"] is False  # converted, not dropped
@@ -38,15 +38,15 @@ def test_unrepairable_error_is_fixed_on_the_same_version(profile_name: str) -> N
 
 def test_value_without_a_conversion_is_removed_and_reported() -> None:
     d = doc16(scope="sometimes")  # not an enum value, no case variant to map to
-    out, res, log = run(d, load_profile("checkmarx"))
+    out, res, log = run(d, repair_only(load_profile("checkmarx")))
     assert res.final_version == "1.6" and "scope" not in out["components"][0]
     removed = [c for c in log.changes if c.rule_id in ("COERCE-002", "REP-003", "PRUNE-001", "REP-005")]
     assert removed and all(c.path.startswith("/components/0/scope") for c in removed)
 
 
 def test_not_accepted_version_is_kept_with_a_warning() -> None:
-    prof = replace(load_profile("checkmarx"), specs={**load_profile("checkmarx").specs,
-                                                    "cyclonedx": replace(load_profile("checkmarx").rules_for("cyclonedx"),
+    prof = replace(repair_only(load_profile("checkmarx")), specs={**repair_only(load_profile("checkmarx")).specs,
+                                                    "cyclonedx": replace(repair_only(load_profile("checkmarx")).rules_for("cyclonedx"),
                                                                          accepted_versions=["1.5"])})
     out, res, log = run(doc16(), prof)
     assert res.ok and res.final_version == "1.6" and out["specVersion"] == "1.6"
@@ -54,7 +54,7 @@ def test_not_accepted_version_is_kept_with_a_warning() -> None:
 
 
 def test_allow_downgrade_restores_the_descent() -> None:
-    prof = load_profile("checkmarx")
+    prof = repair_only(load_profile("checkmarx"))
     prof = replace(prof, allow_downgrade=True,
                    specs={**prof.specs, "cyclonedx": replace(prof.rules_for("cyclonedx"), accepted_versions=["1.5"])})
     out, res, _ = run(doc16(), prof)
@@ -77,10 +77,10 @@ def test_cli_fix_never_downgrades_and_flag_opts_in(tmp_path: Path) -> None:
                                  "unsupported/legacy-1.2.cdx.json", "minimal/min-spdx-2.2.json"])
 def test_every_profile_keeps_the_declared_version(rel: str, tmp_path: Path) -> None:
     for name in ("checkmarx", "checkmarx-cli", "compliance"):
-        r = run_fix(CORPUS / rel, load_profile(name), tmp_path / name, audit=False)
+        r = run_fix(CORPUS / rel, repair_only(load_profile(name)), tmp_path / name, audit=False)
         assert r.final_version == r.declared and r.descent is not None and r.descent.path == [r.declared], (name, r.descent)
 
 
 def test_future_version_still_maps_to_17(tmp_path: Path) -> None:
-    r = run_fix(CORPUS / "future" / "min-cdx-1.8.json", load_profile("checkmarx"), tmp_path, audit=False)
+    r = run_fix(CORPUS / "future" / "min-cdx-1.8.json", repair_only(load_profile("checkmarx")), tmp_path, audit=False)
     assert r.final_version == "1.7" and r.descent is not None and r.descent.path == ["1.8", "1.7"]

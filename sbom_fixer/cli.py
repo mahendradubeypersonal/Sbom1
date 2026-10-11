@@ -12,6 +12,7 @@ import typer
 from . import __version__
 from .audit.ntia import ntia_check
 from .audit.sbomqs import sbomqs_score
+from .ecosystem import ECOSYSTEMS
 from .errors import SbomFixerError
 from .pipeline import (
     EXIT_BISECT,
@@ -28,13 +29,20 @@ from .validate import group
 ALLOW_DOWNGRADE_HELP = ("Allow stepping down one version at a time (e.g. 1.7 -> 1.6) when the file is not valid or not "
                         "accepted at its own version. Off by default: fix repairs on the file's own schema.")
 
+NO_CANONICAL_HELP = ("Keep every field and only repair. By default the Checkmarx profiles write the canonical form "
+                     "(rules CXN-*): components reduced to bom-ref, type, name, version, purl, licenses.")
+
 app = typer.Typer(add_completion=False, no_args_is_help=True,
                   help="Repair SBOMs on their own schema version (never a downgrade unless asked) and explain every change.")
 
 
 def _profile(name: str, accepted: str | None = None, floor: str | None = None,
-             allow_downgrade: bool = False) -> Profile:
+             allow_downgrade: bool = False, canonical: bool = True) -> Profile:
     prof = load_profile(name)
+    if not canonical and prof.canonical is not None:
+        import dataclasses
+
+        prof = dataclasses.replace(prof, canonical=None)
     if allow_downgrade:
         import dataclasses
 
@@ -75,10 +83,11 @@ def check(
     profile: Annotated[str, typer.Option("--profile", "-p", help="Profile name or YAML path")] = "checkmarx",
     accepted: Annotated[str | None, typer.Option(help="Override cyclonedx accepted_versions, e.g. 1.3,1.4,1.5,1.6,1.7")] = None,
     allow_downgrade: Annotated[bool, typer.Option("--allow-downgrade", help=ALLOW_DOWNGRADE_HELP)] = False,
+    no_canonical: Annotated[bool, typer.Option("--no-canonical", help=NO_CANONICAL_HELP)] = False,
 ) -> None:
     """Read-only diagnosis: own-version errors grouped by cause and what a fix would do."""
     try:
-        prof = _profile(profile, accepted, allow_downgrade=allow_downgrade)
+        prof = _profile(profile, accepted, allow_downgrade=allow_downgrade, canonical=not no_canonical)
         r = run_fix(file, prof, write=False, audit=False)
     except SbomFixerError as exc:
         typer.echo(f"error: {exc}", err=True)
@@ -104,6 +113,7 @@ def fix(
     no_audit: Annotated[bool, typer.Option("--no-audit", help="Skip the NTIA / sbomqs quality audit")] = False,
     accepted: Annotated[str | None, typer.Option(help="Override cyclonedx accepted_versions, e.g. 1.3,1.4,1.5,1.6,1.7")] = None,
     allow_downgrade: Annotated[bool, typer.Option("--allow-downgrade", help=ALLOW_DOWNGRADE_HELP)] = False,
+    no_canonical: Annotated[bool, typer.Option("--no-canonical", help=NO_CANONICAL_HELP)] = False,
 ) -> None:
     """Fix SBOMs on their own schema version (never a downgrade unless --allow-downgrade); write SBOM, diff, notes, quality."""
     worst = EXIT_OK
@@ -117,7 +127,7 @@ def fix(
     for f in files:
         for pname in profile:
             try:
-                prof = _profile(pname, accepted, allow_downgrade=allow_downgrade)
+                prof = _profile(pname, accepted, allow_downgrade=allow_downgrade, canonical=not no_canonical)
                 r = run_fix(f, prof, out, acceptance=mode, client=client, max_uploads=max_uploads, audit=not no_audit)
             except SbomFixerError as exc:
                 typer.echo(f"error: {exc}", err=True)
@@ -138,6 +148,95 @@ def fix(
             _echo_summary(r)
             worst = max(worst, r.exit_code)
     raise typer.Exit(worst)
+
+
+@app.command("cdxgen-fix")
+def cdxgen_fix(
+    file: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="SBOM file (CycloneDX or SPDX 2.x JSON, any generator)")],
+    out: Annotated[Path | None, typer.Option("--out", "-o", help="Output folder (default: next to the input)")] = None,
+    name: Annotated[str, typer.Option("--name", help="File name of the final SBOM")] = "Copilot_SBOM.json",
+    profile: Annotated[str, typer.Option("--profile", "-p", help="Profile name or YAML path")] = "checkmarx",
+    ecosystem: Annotated[str | None, typer.Option(help="Force the ecosystem instead of detecting it: " + ", ".join(ECOSYSTEMS))] = None,
+    spec_version: Annotated[str | None, typer.Option("--spec-version", help="CycloneDX version of the converted file "
+                                                     "(default: CycloneDX input keeps its version, SPDX becomes 1.6)")] = None,
+    no_audit: Annotated[bool, typer.Option("--no-audit", help="Skip the NTIA / sbomqs quality audit")] = False,
+) -> None:
+    """Convert any SBOM to cdxgen-layout CycloneDX, then write the Checkmarx canonical form (the #2 prompt).
+
+    Step 1 (cdxgen layout): SPDX 2.2/2.3 becomes CycloneDX 1.6; CycloneDX keeps its version; purls written as a
+    URL become the registry purl; bom-ref = purl when missing; one dependencies entry per component. Written as
+    <name>.cdxgen.cdx.json.
+    Step 2 (schema validation): the converted file is validated against its CycloneDX schema; errors are listed.
+    Step 3 (fix + canonical form, the prompt): repair the schema errors on that version, then every component becomes {bom-ref, type, name, version,
+    purl, licenses}, metadata {timestamp, tools, component}, dependencies only to existing components. metadata.tools
+    names the generator of the detected ecosystem: .NET -> cyclonedx-dotnet, Java -> cyclonedx-java, Node ->
+    cyclonedx-node, Python -> cyclonedx-python, ... (majority of the component purl types; --ecosystem overrides).
+    No purl or bom-ref holds a web URL (http/https). The result is validated again before it is written as
+    Copilot_SBOM.json (--name), with notes, change log and diff. Exit codes as for fix.
+    """
+    import dataclasses
+
+    from .cdxgen import to_cdxgen
+    from .errors import DetectError
+    from .pipeline import output_stem
+    from .profile import CanonicalPolicy
+    from .serialize import write_json, write_text
+
+    try:
+        prof = load_profile(profile)
+        if "cyclonedx" not in prof.specs:
+            raise SbomFixerError(f"Profile '{prof.name}' has no cyclonedx section.")
+        canonical = dataclasses.replace(prof.canonical or CanonicalPolicy(), tool_per_ecosystem=True)
+        if ecosystem:
+            if ecosystem.lower() not in canonical.ecosystem_tools:
+                raise SbomFixerError(f"--ecosystem must be one of {', '.join(sorted(canonical.ecosystem_tools))}.")
+            canonical = dataclasses.replace(canonical, ecosystem=ecosystem.lower())
+        prof = dataclasses.replace(prof, canonical=canonical)
+        conv = to_cdxgen(file.read_bytes(), spec_version)
+    except (DetectError, SbomFixerError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(EXIT_CANNOT_FIX) from None
+    out_dir = out or file.parent
+    stem = output_stem(file)
+    converted = out_dir / f"{stem}.cdxgen.cdx.json"
+    write_json(conv.doc, converted)
+    r = run_fix(converted, prof, out_dir, audit=not no_audit, sbom_name=name)
+
+    tool_line = next((c.reason for c in r.log.changes if c.rule_id == "CXN-011" and c.path == "/metadata/tools"),
+                     next((f.message for f in r.log.findings if f.rule_id == "CXN-011"), "tools unchanged"))
+    from .validate import group
+
+    step1_errors = len(r.original_issues)
+    final_ok = r.ok and r.outputs.get("sbom") is not None
+    validation = {
+        "converted_schema_errors": step1_errors,
+        "converted_errors_grouped": [{"keyword": kw, "path": pth, "count": n, "example": msg[:200]}
+                                     for kw, pth, n, msg in group(r.original_issues)[:50]],
+        "final_schema_valid": final_ok,
+        "final_version": r.final_version,
+    }
+    report = {"input": file.name, "source": f"{conv.source_spec} {conv.source_version}",
+              "converted": f"cyclonedx {conv.target_version}", "conversion_notes": conv.notes,
+              "validation": validation, "tools": tool_line,
+              "outputs": {"converted": str(converted), **r.outputs}, "exit_code": r.exit_code}
+    report_path = out_dir / f"{stem}.cdxgen.report.json"
+    write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", report_path)
+
+    typer.echo(f"{file.name}: {conv.source_spec} {conv.source_version} -> cdxgen layout, CycloneDX {conv.target_version}")
+    for note in conv.notes:
+        typer.echo(f"  convert    : {note}")
+    typer.echo(f"  converted  : {converted}")
+    typer.echo(f"  validate   : converted file vs CycloneDX {conv.target_version} schema: {step1_errors} error(s)"
+               + (" -> repaired in step 2" if step1_errors and final_ok else ""))
+    if r.original_issues:
+        for kw, pth, n, msg in group(r.original_issues)[:10]:
+            typer.echo(f"    {n:>6}  {kw:20} {pth}  e.g. {msg[:70]}")
+    typer.echo(f"  final      : {name} " + (f"is schema-valid CycloneDX {r.final_version}" if final_ok
+                                            else "NOT written - schema errors remain (see notes)"))
+    typer.echo(f"  tool       : {tool_line}")
+    typer.echo(f"  report     : {report_path}")
+    _echo_summary(r)
+    raise typer.Exit(r.exit_code)
 
 
 @app.command()

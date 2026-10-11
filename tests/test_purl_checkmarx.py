@@ -18,7 +18,7 @@ from sbom_fixer.profile import Profile, load_profile, parse_profile
 from sbom_fixer.purlmap import classify, purl_from_url
 from sbom_fixer.serialize import write_json
 
-from .conftest import CORPUS, bom, ids, run
+from .conftest import CORPUS, bom, ids, repair_only, run
 
 
 def comp(purl: str | None, name: str = "x", version: str | None = "1.0.0", **extra: Any) -> dict[str, Any]:
@@ -311,7 +311,7 @@ def test_san013_empty_tools_replaced_and_no_duplicate_with_provenance(tmp_path: 
     d["metadata"]["tools"] = {"components": []}
     src = tmp_path / "t.cdx.json"
     write_json(d, src)
-    r = run_fix(src, load_profile("checkmarx"), tmp_path / "out", audit=False)
+    r = run_fix(src, repair_only(load_profile("checkmarx")), tmp_path / "out", audit=False)
     tools = r.fixed_doc["metadata"]["tools"]["components"]
     assert [t["name"] for t in tools] == ["sbom-fixer"] and r.exit_code == 1
 
@@ -358,7 +358,7 @@ def test_spdx_purl_rules_and_relationships(checkmarx: Profile) -> None:
 
 
 def test_coverage_statuses_and_csv(tmp_path: Path) -> None:
-    r = run_fix(CORPUS / "purl" / "remap.cdx.json", load_profile("checkmarx"), tmp_path, audit=False)
+    r = run_fix(CORPUS / "purl" / "remap.cdx.json", repair_only(load_profile("checkmarx")), tmp_path, audit=False)
     assert r.coverage is not None and r.coverage_before is not None
     assert r.coverage_before.scanned == 0 and r.coverage.scanned == 4
     assert r.coverage.by_status()["remapped"] == 4 and r.coverage.by_status()["unsupported"] == 2
@@ -379,7 +379,7 @@ def test_coverage_chain_keeps_first_original(tmp_path: Path) -> None:
     d["components"][0]["purl"] = "pkg:NODEJS/express@4.18.2?repository_url=https://r.example.com"
     src = tmp_path / "c.cdx.json"
     write_json(d, src)
-    r = run_fix(src, load_profile("checkmarx"), tmp_path / "o", audit=False)
+    r = run_fix(src, repair_only(load_profile("checkmarx")), tmp_path / "o", audit=False)
     row = r.coverage.rows[0]  # type: ignore[union-attr]
     assert row.final_purl == "pkg:npm/express@4.18.2" and row.status == "remapped"
     assert row.original_purl == "pkg:NODEJS/express@4.18.2?repository_url=https://r.example.com"
@@ -387,13 +387,13 @@ def test_coverage_chain_keeps_first_original(tmp_path: Path) -> None:
 
 
 def test_exit_7_when_nothing_is_scannable(tmp_path: Path) -> None:
-    r = run_fix(CORPUS / "purl" / "none-supported.cdx.json", load_profile("checkmarx"), tmp_path, audit=False)
+    r = run_fix(CORPUS / "purl" / "none-supported.cdx.json", repair_only(load_profile("checkmarx")), tmp_path, audit=False)
     assert r.exit_code == EXIT_NO_SCANNABLE and r.coverage is not None and r.coverage.scanned == 0
     assert "Checkmarx would fail the scan" in Path(r.outputs["notes"]).read_text(encoding="utf-8")
 
 
 def test_min_supported_zero_disables_gate(tmp_path: Path) -> None:
-    prof = load_profile("checkmarx")
+    prof = repair_only(load_profile("checkmarx"))
     prof = replace(prof, purl=replace(prof.purl, min_supported=0))  # type: ignore[type-var]
     r = run_fix(CORPUS / "purl" / "none-supported.cdx.json", prof, tmp_path, audit=False)
     assert r.exit_code == 0
@@ -422,7 +422,7 @@ def test_purl_profile_validation(purl: dict[str, Any], msg: str) -> None:
 
 
 def test_unencoded_npm_scope_counts_as_not_scanned_before_the_fix(tmp_path: Path) -> None:
-    r = run_fix(CORPUS / "purl" / "format-fixes.cdx.json", load_profile("checkmarx"), tmp_path, audit=False)
+    r = run_fix(CORPUS / "purl" / "format-fixes.cdx.json", repair_only(load_profile("checkmarx")), tmp_path, audit=False)
     assert r.coverage_before is not None and r.coverage is not None
     before = {row.name: row.status for row in r.coverage_before.rows}
     assert before["@angular/core"] == "malformed" and r.coverage_before.scanned == 5

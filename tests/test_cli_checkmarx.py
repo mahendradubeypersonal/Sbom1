@@ -38,7 +38,9 @@ def test_cli_check_accepted_override() -> None:
 def test_cli_fix_two_profiles(tmp_path: Path) -> None:
     res = runner.invoke(app, ["fix", str(CORPUS / "trivy" / "payments-api.trivy.json"), "-p", "checkmarx", "-p", "compliance",
                               "--out", str(tmp_path)])
-    assert res.exit_code == 0, res.output  # valid 1.6 is kept by both profiles
+    # valid 1.6 is kept by both profiles; the checkmarx copy is rewritten to the canonical form (CXN-*), so exit 1
+    assert res.exit_code == 1, res.output
+    assert "level 1.6  : ACCEPTED" in res.output
     names = {p.name for p in tmp_path.iterdir()}
     assert {"payments-api.trivy.checkmarx.cdx.json", "payments-api.trivy.compliance.cdx.json",
             "payments-api.trivy.checkmarx.notes.txt", "payments-api.trivy.checkmarx.diff.patch.json",

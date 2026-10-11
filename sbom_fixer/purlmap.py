@@ -135,6 +135,85 @@ def _github(segs: list[str], version: str | None) -> PackageURL | None:
     return PackageURL(type="github", namespace=owner, name=repo, version=tag or version)
 
 
+# package pages on registry websites (the version comes from the URL when it has one, else from the component)
+def _npm_web(segs: list[str], version: str | None) -> PackageURL | None:
+    if len(segs) < 2 or segs[0] != "package":
+        return None
+    rest = segs[1:]
+    ns = None
+    if rest[0].startswith("@") and len(rest) >= 2:
+        ns, rest = rest[0], rest[1:]
+    name = rest[0]
+    if len(rest) >= 3 and rest[1] == "v":
+        version = rest[2]
+    return PackageURL(type="npm", namespace=ns, name=name, version=version)
+
+
+def _mvnrepository(segs: list[str], version: str | None) -> PackageURL | None:
+    if len(segs) < 3 or segs[0] != "artifact":
+        return None
+    return PackageURL(type="maven", namespace=segs[1], name=segs[2], version=segs[3] if len(segs) > 3 else version)
+
+
+def _crates(segs: list[str], version: str | None) -> PackageURL | None:
+    if len(segs) < 2 or segs[0] != "crates":
+        return None
+    return PackageURL(type="cargo", name=segs[1], version=segs[2] if len(segs) > 2 else version)
+
+
+def _packagist(segs: list[str], version: str | None) -> PackageURL | None:
+    if len(segs) < 3 or segs[0] != "packages":
+        return None
+    return PackageURL(type="composer", namespace=segs[1], name=segs[2], version=version)
+
+
+def _hex(segs: list[str], version: str | None) -> PackageURL | None:
+    if len(segs) < 2 or segs[0] != "packages":
+        return None
+    return PackageURL(type="hex", name=segs[1], version=segs[2] if len(segs) > 2 else version)
+
+
+def _gem_web(segs: list[str], version: str | None) -> PackageURL | None:
+    if len(segs) < 2 or segs[0] != "gems":
+        return None
+    return PackageURL(type="gem", name=segs[1], version=segs[3] if len(segs) > 3 and segs[2] == "versions" else version)
+
+
+def _pkg_go_dev(segs: list[str], version: str | None) -> PackageURL | None:
+    if len(segs) < 2:
+        return None
+    path = "/".join(segs)
+    if "@" in path:
+        path, version = path.rsplit("@", 1)
+    module = path.split("/")
+    return PackageURL(type="golang", namespace="/".join(module[:-1]), name=module[-1], version=version)
+
+
+def _nuget_web(segs: list[str], version: str | None) -> PackageURL | None:
+    if len(segs) < 2 or segs[0] != "packages":
+        return None
+    return PackageURL(type="nuget", name=segs[1], version=segs[2] if len(segs) > 2 else version)
+
+
+def _pypi_web(segs: list[str], version: str | None) -> PackageURL | None:
+    if len(segs) < 2 or segs[0] != "project":
+        return None
+    return PackageURL(type="pypi", name=segs[1].lower(), version=segs[2] if len(segs) > 2 else version)
+
+
+_WEB_HOSTS = {
+    "www.npmjs.com": _npm_web, "npmjs.com": _npm_web,
+    "mvnrepository.com": _mvnrepository,
+    "crates.io": _crates,
+    "packagist.org": _packagist,
+    "hex.pm": _hex,
+    "rubygems.org": _gem_web,
+    "pkg.go.dev": _pkg_go_dev,
+    "www.nuget.org": _nuget_web, "nuget.org": _nuget_web,
+    "pypi.org": _pypi_web,
+}
+
+
 _HOSTS = {
     "repo1.maven.org": _maven, "repo.maven.apache.org": _maven, "central.sonatype.com": _maven,
     "registry.npmjs.org": _npm,
@@ -157,10 +236,11 @@ def purl_from_url(url: str, version: str | None = None, *, allow_github: bool = 
     if host == "github.com" and allow_github:
         return _github(segs, version)
     fn = _HOSTS.get(host)
-    if fn is None:
-        return None
     try:
-        return fn(segs)
+        found = fn(segs) if fn is not None else None
+        if found is None and host in _WEB_HOSTS:
+            found = _WEB_HOSTS[host](segs, version)
+        return found
     except ValueError:
         return None
 
