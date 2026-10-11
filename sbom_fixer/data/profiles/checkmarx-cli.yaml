@@ -44,6 +44,20 @@ purl:
   os_package_action: keep      # keep | remove (remove = DATA_LOSS)
   strip_url_qualifiers: true   # CXP-005: Checkmarx documents pkg:type/[namespace/]name@version only
   min_supported: 1             # fewer components with a supported purl -> exit 7 (Checkmarx would fail the scan)
+canonical:
+  # Checkmarx canonical form (CXN-*): the minimal cyclonedx-dotnet layout that Checkmarx One SCA ingests reliably.
+  # Each component becomes {bom-ref, type, name, version, purl, licenses}; metadata becomes {timestamp, tools,
+  # component}; dependencies point only at existing components. The spec version is never changed.
+  # Set "enabled: false" (or run fix with --no-canonical) to keep every field and only repair.
+  enabled: true
+  tools:                       # metadata.tools in the 1.4 array form (valid in every CycloneDX version)
+    - vendor: AppThreat
+      name: cyclonedx-dotnet
+      version: "0.8.0"
+  component_fields: [bom-ref, type, name, version, purl, licenses]
+  default_license: NOASSERTION # used when a component has no licence (Checkmarx rejects empty licence arrays)
+  keep_purl_qualifiers: false  # pkg:type/[namespace/]name@version only
+  purl_fallback: generic       # generic: every component gets a purl (pkg:generic/<name>@<version>) | none
 quality:
   audit: report              # never gate the scanner copy on quality (ADR-15)
   fail_on_regression: true

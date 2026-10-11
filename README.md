@@ -11,6 +11,15 @@ For each SBOM the tool:
 
 For Checkmarx (profiles `checkmarx` and `checkmarx-cli`) it also:
 
+- **writes the canonical form (rules CXN-\*)** as the last step: a schema-valid SBOM is not always ingested by
+  Checkmarx (extra fields such as SHA3 hashes, evidence, properties, externalReferences, services, purl qualifiers or the
+  1.5+ tools object make uploads fail or return 0 packages). The output keeps `bomFormat`, `specVersion` (unchanged),
+  `serialNumber` and `version`; `metadata` becomes `{timestamp, tools: [AppThreat cyclonedx-dotnet 0.8.0], component}`;
+  every component becomes `{bom-ref, type, name, version, purl, licenses}` with a purl of the form
+  `pkg:type/[namespace/]name@version` (built from the ecosystem, else `pkg:generic/...`, never null) and a licence
+  (`NOASSERTION` when there is none); `dependencies` point only at components that exist, without self-references.
+  Configure it in the profile's `canonical:` section; `--no-canonical` keeps every field and only repairs;
+
 - keeps CycloneDX 1.6 and 1.7 at their own version in every profile (`checkmarx`, `checkmarx-cli`, `compliance`); nothing steps down unless `--allow-downgrade` is given;
 - brings a newer CycloneDX version (1.8, 1.9, ...) down to 1.7 with a generic "future hop" (CDX-FWD-*);
 - keeps every purl type Checkmarx supports as written, repairs the format Checkmarx cannot match (npm `@` scope, missing version or groupId, URL qualifiers), remaps unsupported types only on hard evidence (CXP-010..013) and lists every component Checkmarx will skip;
@@ -55,6 +64,7 @@ sbom-fixer verify out/sbom.checkmarx.cdx.json       # upload to the Checkmarx ve
 sbom-fixer bisect failing.json                      # find the field that makes Checkmarx reject a file
 sbom-fixer fill-required any.json --out out/        # schema-valid with every mandatory field (derive, else placeholder)
 sbom-fixer fill-all any.json --out out/             # schema-valid with every schema field (derive, else placeholder)
+sbom-fixer cdxgen-fix any.json --out out/           # any SBOM -> cdxgen layout -> Checkmarx canonical form -> out/Copilot_SBOM.json
 ```
 
 Useful options for `fix`:
@@ -66,8 +76,53 @@ Useful options for `fix`:
 | `--verify-each-step` | Ask Checkmarx (real upload) at each level instead of the profile list; `--max-uploads` sets the budget |
 | `--verify --expected-packages N` | Upload the final file and check the package count (5% tolerance) |
 | `--no-audit` | Skip the NTIA / sbomqs audit |
+| `--no-canonical` | Keep every field (only repair); by default the Checkmarx profiles write the canonical form (CXN-*) |
 
 On Windows PowerShell 5.1, never write SBOMs with `>`; it produces UTF-16. The tool always writes its files itself.
+
+## Any SBOM to the Checkmarx form: `cdxgen-fix`
+
+```bash
+sbom-fixer cdxgen-fix sbom.json --out out/                     # writes out/Copilot_SBOM.json
+sbom-fixer cdxgen-fix sbom.spdx.json --out out/ --ecosystem dotnet --name app.cdx.json
+```
+
+Three steps:
+
+1. **cdxgen layout** (`<name>.cdxgen.cdx.json`). cdxgen builds SBOMs from source code and cannot read an existing SBOM,
+   so this step gives any SBOM the shape cdxgen writes. SPDX 2.2/2.3 JSON becomes CycloneDX 1.6: packages become
+   components (purl from `externalRefs`, licences from `licenseConcluded`/`licenseDeclared`, checksums become hashes),
+   `DEPENDS_ON` and `*_DEPENDENCY_OF` become dependencies, and the single described package (else the document) becomes
+   `metadata.component`. CycloneDX keeps its version (`--spec-version` overrides it). In both cases a missing bom-ref is
+   set to the purl, and every component gets a dependencies entry.
+   Purls written as a URL become the registry purl (registry downloads and package pages: npmjs.com, pypi.org,
+   mvnrepository.com, nuget.org, crates.io, packagist.org, hex.pm, rubygems.org, pkg.go.dev, Maven Central).
+2. **schema validation**: the converted file is validated against its CycloneDX schema; the errors are printed
+   grouped by cause and saved in the report (`validation`).
+3. **fix + canonical form** (the `#2` prompt). The repair fixes those errors on the same version, then the canonical
+   rules CXN-* apply (see above), and the result is validated again before it is written. **No purl or bom-ref holds
+   a web URL** (http/https, also percent-encoded): a URL that is not a known registry is moved out of the purl and the
+   component gets `pkg:generic/<name>@<version>`. `metadata.tools` is named after the **detected ecosystem**:
+
+   | Ecosystem (purl types) | Tool name |
+   |---|---|
+   | .NET (`nuget`) | `cyclonedx-dotnet` |
+   | Java (`maven`, `gradle`, `sbt`, `ivy`) | `cyclonedx-java` |
+   | Node (`npm`, `yarn`, `bower`, `pnpm`) | `cyclonedx-node` |
+   | Python (`pypi`, `pip`, `poetry`) | `cyclonedx-python` |
+   | Go (`golang`) | `cyclonedx-go` |
+   | Ruby (`gem`) / PHP (`composer`) / Rust (`cargo`) / Erlang (`hex`) | `cyclonedx-ruby` / `-php` / `-rust` / `-erlang` |
+   | Dart (`pub`) / Swift (`swift`, `cocoapods`) / C++ (`conan`) / Perl (`cpan`) | `cyclonedx-dart` / `-swift` / `-cpp` / `-perl` |
+
+   The vendor (`AppThreat`) and version (`0.8.0`) come from the profile's `canonical.tools`. Detection: the majority
+   of the component purl types (OS packages and `generic` do not count); a tie goes to the root component's type; with
+   no package purl, the root component, then the generator name (`cyclonedx-gradle-plugin` gives Java). With no
+   evidence the profile's default tool (`cyclonedx-dotnet`) is kept. `--ecosystem java` skips the detection. The
+   names can be changed in a profile: `canonical.ecosystem_tools: {java: cyclonedx-maven}`.
+
+Outputs in `--out`: `Copilot_SBOM.json` (`--name`), `<name>.cdxgen.cdx.json` (step 1), `<name>.cdxgen.report.json`
+(source, conversion notes, the tool decision), and the usual `<name>.cdxgen.checkmarx.*` notes, change log, diff and
+purl coverage of step 2. Exit codes as for `fix`. `fix` itself is unchanged; it keeps the profile's fixed tool list.
 
 ## Fill missing fields: `fill-required` and `fill-all`
 

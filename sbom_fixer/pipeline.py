@@ -79,7 +79,7 @@ def output_stem(input_path: Path) -> str:
 
 def run_fix(input_path: Path, profile: Profile, out_dir: Path | None = None, *, acceptance: str | None = None,
             client: AcceptanceClient | None = None, max_uploads: int = 6, audit: bool = True, write: bool = True,
-            dry_run: bool = False, progress: Any = None) -> RunResult:
+            dry_run: bool = False, progress: Any = None, sbom_name: str | None = None) -> RunResult:
     raw = input_path.read_bytes()
     sha = hashlib.sha256(raw).hexdigest()
     mode = acceptance or profile.acceptance
@@ -129,7 +129,7 @@ def run_fix(input_path: Path, profile: Profile, out_dir: Path | None = None, *, 
     if result.descent.ok:
         result.fixed_doc = doc
     ext = "cdx" if detected.spec == "cyclonedx" else "spdx"
-    sbom_path = out_dir / f"{stem}.{profile.name}.{ext}.json"
+    sbom_path = out_dir / (sbom_name or f"{stem}.{profile.name}.{ext}.json")
 
     if result.ok:
         size_mb = len(dumps(doc).encode("utf-8")) / 1_000_000

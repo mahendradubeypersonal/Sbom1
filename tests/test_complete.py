@@ -15,7 +15,7 @@ from sbom_fixer.cli import app
 from sbom_fixer.complete import IDENTITY_KEYS, PLACEHOLDER, fill
 from sbom_fixer.validate import validate
 
-from .conftest import CORPUS
+from .conftest import CORPUS, repair_only
 
 NOW = datetime(2026, 10, 6, 10, 0, 0, tzinfo=UTC)
 SHA = "0" * 64
@@ -284,7 +284,7 @@ def test_fill_all_output_survives_fix_unchanged_version(rel: str) -> None:
     original_empty = not no_empty(doc)
     assert original_empty or no_empty(out)
     log = ChangeLog(level=version)
-    ctx = Ctx(log=log, spec=spec, version=version, declared=version, profile=load_profile("checkmarx"), source_sha256=SHA)
+    ctx = Ctx(log=log, spec=spec, version=version, declared=version, profile=repair_only(load_profile("checkmarx")), source_sha256=SHA)
     ctx._doc = out
     assert process_level(out, ctx) == []
 
@@ -307,11 +307,13 @@ def test_progress_lines_when_forced(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     src.write_text(json.dumps(broken_cdx()), encoding="utf-8")
     res = CliRunner().invoke(app, ["fill-required", str(src), "--out", str(tmp_path / "o")])
     assert res.exit_code == 0 and "reading" in res.output and "done" in res.output
-    res = CliRunner().invoke(app, ["fix", str(CORPUS / "minimal" / "min-cdx-1.6.json"), "--out", str(tmp_path / "f"), "--no-audit"])
+    res = CliRunner().invoke(app, ["fix", str(CORPUS / "minimal" / "min-cdx-1.6.json"), "--out", str(tmp_path / "f"), "--no-audit",
+                                    "--no-canonical"])
     assert res.exit_code == 0 and "version path 1.6" in res.output and "done, exit code 0" in res.output
 
 
 def test_no_progress_for_small_files_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("SBOM_FIXER_PROGRESS", raising=False)
-    res = CliRunner().invoke(app, ["fix", str(CORPUS / "minimal" / "min-cdx-1.6.json"), "--out", str(tmp_path), "--no-audit"])
+    res = CliRunner().invoke(app, ["fix", str(CORPUS / "minimal" / "min-cdx-1.6.json"), "--out", str(tmp_path), "--no-audit",
+                                    "--no-canonical"])
     assert res.exit_code == 0 and "version path" not in res.output

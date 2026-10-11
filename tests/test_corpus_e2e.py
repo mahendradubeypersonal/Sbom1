@@ -15,7 +15,7 @@ from sbom_fixer.pipeline import run_fix
 from sbom_fixer.profile import Profile, load_profile
 from sbom_fixer.validate import validate
 
-from .conftest import CORPUS
+from .conftest import CORPUS, repair_only
 
 EXPECTED = yaml.safe_load((CORPUS / "expected.yaml").read_text(encoding="utf-8"))
 
@@ -23,7 +23,7 @@ EXPECTED = yaml.safe_load((CORPUS / "expected.yaml").read_text(encoding="utf-8")
 @pytest.mark.parametrize("rel", sorted(EXPECTED))
 def test_corpus_file(rel: str, tmp_path: Path) -> None:
     exp = EXPECTED[rel]
-    prof = load_profile("checkmarx")
+    prof = repair_only(load_profile("checkmarx"))
     r = run_fix(CORPUS / rel, prof, tmp_path)
     assert r.exit_code == exp["exit_code"], (r.error, [a.reason for a in (r.descent.attempts if r.descent else [])])
     assert Path(r.outputs["notes"]).exists()
@@ -67,7 +67,7 @@ def capped(profile: Profile, top: str) -> Profile:
 
 def test_dual_output_compliance_copy_is_never_downgraded(tmp_path: Path) -> None:
     src = CORPUS / "cdxgen" / "analytics.cdxgen.json"
-    cx = run_fix(src, capped(load_profile("checkmarx-cli"), "1.6"), tmp_path)  # one-off cap, like --accepted 1.3,...,1.6
+    cx = run_fix(src, capped(repair_only(load_profile("checkmarx-cli")), "1.6"), tmp_path)  # one-off cap, like --accepted 1.3,...,1.6
     comp = run_fix(src, load_profile("compliance"), tmp_path)
     assert cx.final_version == "1.6" and comp.final_version == "1.7" and comp.descent is not None and comp.descent.path == ["1.7"]
     assert Path(cx.outputs["sbom"]).name == "analytics.cdxgen.checkmarx-cli.cdx.json"
@@ -75,18 +75,18 @@ def test_dual_output_compliance_copy_is_never_downgraded(tmp_path: Path) -> None
 
 
 def test_data_loss_forbidden_gives_exit_3(tmp_path: Path) -> None:
-    prof = replace(capped(load_profile("checkmarx"), "1.5"), allow_data_loss=False)
+    prof = replace(capped(repair_only(load_profile("checkmarx")), "1.5"), allow_data_loss=False)
     assert run_fix(CORPUS / "cdxgen" / "crypto.cdx.json", prof, tmp_path).exit_code == 3
 
 
 def test_require_purl_fail_gives_exit_2(tmp_path: Path) -> None:
-    prof = replace(load_profile("checkmarx"), require_purl="fail")
+    prof = replace(repair_only(load_profile("checkmarx")), require_purl="fail")
     r = run_fix(CORPUS / "trivy" / "payments-api.trivy.json", prof, tmp_path)
     assert r.exit_code == 2 and "require_purl" in (r.error or "")
 
 
 def test_notes_sections(tmp_path: Path) -> None:
-    r = run_fix(CORPUS / "trivy" / "payments-api.trivy.json", capped(load_profile("checkmarx"), "1.5"), tmp_path)
+    r = run_fix(CORPUS / "trivy" / "payments-api.trivy.json", capped(repair_only(load_profile("checkmarx")), "1.5"), tmp_path)
     text = Path(r.outputs["notes"]).read_text(encoding="utf-8")
     for heading in ("Version path    : 1.6", "1. WHY THE ORIGINAL FAILED", "2. CHANGES MADE", "3. DATA LOSS",
                     "4. SCAN COVERAGE (Checkmarx)", "5. RECOMMENDED SOURCE FIX", "6. COMPONENTS CHECKMARX WILL SKIP",
@@ -108,7 +108,7 @@ def test_large_document_performance(tmp_path: Path) -> None:
     src = tmp_path / "big.cdx.json"
     src.write_text(json.dumps(doc), encoding="utf-8")
     t = time.perf_counter()
-    r = run_fix(src, load_profile("checkmarx"), tmp_path, audit=False)
+    r = run_fix(src, repair_only(load_profile("checkmarx")), tmp_path, audit=False)
     elapsed = time.perf_counter() - t
     assert r.exit_code in (0, 1) and r.final_version == "1.6" and r.coverage is not None and r.coverage.scanned == 5000
     assert elapsed < 30, f"5,000 components took {elapsed:.1f}s"

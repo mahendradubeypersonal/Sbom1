@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from .ecosystem import DEFAULT_ECOSYSTEM_TOOLS
 from .errors import ProfileError
 from .schemas import VERSION_ORDER
 
@@ -21,11 +22,16 @@ _REMOVED_KEYS = {
 _TOP_KEYS = {
     "name", "description", "cyclonedx", "spdx", "acceptance", "tools_form", "flatten_nested_components",
     "require_purl", "allow_data_loss", "max_size_mb", "quality", "frameworks", "provenance", "purl", "ensure_tools",
-    "allow_downgrade",
+    "allow_downgrade", "canonical",
 }
 _SPEC_KEYS = {"floor", "accepted_versions", "max_version", "future_versions"}
 _PURL_KEYS = {"supported_types", "os_types", "remap", "unsupported_action", "os_package_action", "strip_url_qualifiers",
               "min_supported"}
+_CANONICAL_KEYS = {"enabled", "tools", "component_fields", "default_license", "keep_purl_qualifiers", "purl_fallback",
+                   "tool_per_ecosystem", "ecosystem_tools", "ecosystem"}
+CANONICAL_FIELDS = ("bom-ref", "type", "name", "version", "group", "purl", "licenses", "hashes", "cpe", "scope",
+                    "publisher", "supplier", "author", "description")
+DEFAULT_CANONICAL_TOOLS = [{"vendor": "AppThreat", "name": "cyclonedx-dotnet", "version": "0.8.0"}]
 _QUALITY_KEYS = {"audit", "fail_on_regression", "min_score", "score_tolerance"}
 _FRAMEWORK_KEYS = {"id", "gate", "min_spec_version", "version_note"}
 ACCEPTANCE_MODES = ("profile", "checkmarx", "schema-only")
@@ -65,6 +71,25 @@ class PurlPolicy:
 
 
 @dataclass
+class CanonicalPolicy:
+    """Checkmarx canonical form (rules CXN-*): the minimal CycloneDX shape Checkmarx One SCA ingests reliably.
+
+    Applied after the repair, so the output is schema-valid on its own version and has only the fields Checkmarx reads.
+    """
+
+    tools: list[dict[str, str]] = field(default_factory=lambda: [dict(t) for t in DEFAULT_CANONICAL_TOOLS])
+    component_fields: list[str] = field(default_factory=lambda: ["bom-ref", "type", "name", "version", "purl", "licenses"])
+    default_license: str = "NOASSERTION"
+    keep_purl_qualifiers: bool = False  # Checkmarx documents pkg:type/[namespace/]name@version only
+    purl_fallback: str = "generic"  # generic: every component gets a purl | none: leave it without one
+    # tool name from the detected ecosystem (dotnet -> cyclonedx-dotnet, java -> cyclonedx-java, ...); vendor and
+    # version come from tools[0]. Without evidence for an ecosystem, `tools` is used as it is.
+    tool_per_ecosystem: bool = False
+    ecosystem_tools: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_ECOSYSTEM_TOOLS))
+    ecosystem: str | None = None  # force the ecosystem instead of detecting it
+
+
+@dataclass
 class Framework:
     id: str
     gate: str = "advisory"  # required | advisory
@@ -97,6 +122,7 @@ class Profile:
     purl: PurlPolicy | None = None
     ensure_tools: bool = False
     allow_downgrade: bool = False  # False: fix at the declared schema version only (no descent)
+    canonical: CanonicalPolicy | None = None  # None: keep every field (only repair)
 
     def rules_for(self, spec: str) -> SpecRules:
         if spec not in self.specs:
@@ -176,7 +202,51 @@ def parse_profile(data: dict[str, Any], source: str = "<dict>") -> Profile:
         purl=_parse_purl(data.get("purl")),
         ensure_tools=bool(data.get("ensure_tools", False)),
         allow_downgrade=bool(data.get("allow_downgrade", False)),
+        canonical=_parse_canonical(data.get("canonical")),
     )
+
+
+def _parse_canonical(sec: Any) -> CanonicalPolicy | None:
+    if sec is None or sec is False:
+        return None
+    if sec is True:
+        return CanonicalPolicy()
+    if not isinstance(sec, dict):
+        raise ProfileError("canonical must be a mapping (or true/false).")
+    _check_keys("canonical", sec, _CANONICAL_KEYS)
+    if not sec.get("enabled", True):
+        return None
+    policy = CanonicalPolicy()
+    if "tools" in sec:
+        tools = sec["tools"]
+        if not isinstance(tools, list) or not tools or not all(isinstance(t, dict) and t.get("name") for t in tools):
+            raise ProfileError("canonical.tools must be a non-empty list of {vendor, name, version}.")
+        policy.tools = [{k: str(v) for k, v in t.items() if k in ("vendor", "name", "version")} for t in tools]
+    if "component_fields" in sec:
+        fields = [str(f) for f in sec["component_fields"] or []]
+        bad = [f for f in fields if f not in CANONICAL_FIELDS]
+        if bad:
+            raise ProfileError(f"canonical.component_fields: unknown field(s) {', '.join(bad)}. "
+                               f"Allowed: {', '.join(CANONICAL_FIELDS)}.")
+        for required in ("name", "purl"):
+            if required not in fields:
+                raise ProfileError(f"canonical.component_fields must include '{required}'.")
+        policy.component_fields = fields
+    policy.default_license = str(sec.get("default_license", policy.default_license))
+    policy.keep_purl_qualifiers = bool(sec.get("keep_purl_qualifiers", False))
+    policy.purl_fallback = str(sec.get("purl_fallback", "generic"))
+    if policy.purl_fallback not in ("generic", "none"):
+        raise ProfileError("canonical.purl_fallback must be generic or none.")
+    policy.tool_per_ecosystem = bool(sec.get("tool_per_ecosystem", False))
+    extra = sec.get("ecosystem_tools") or {}
+    if not isinstance(extra, dict) or not all(isinstance(v, str) and v for v in extra.values()):
+        raise ProfileError("canonical.ecosystem_tools must map an ecosystem to a tool name, e.g. java: cyclonedx-java.")
+    policy.ecosystem_tools.update({str(k).lower(): v for k, v in extra.items()})
+    if sec.get("ecosystem") is not None:
+        policy.ecosystem = str(sec["ecosystem"]).lower()
+        if policy.ecosystem not in policy.ecosystem_tools:
+            raise ProfileError(f"canonical.ecosystem must be one of {', '.join(sorted(policy.ecosystem_tools))}.")
+    return policy
 
 
 def _parse_purl(sec: Any) -> PurlPolicy | None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,11 @@ def ids(log: ChangeLog) -> set[str]:
     return {c.rule_id for c in log.changes}
 
 
+def repair_only(profile: Profile) -> Profile:
+    """The profile without the Checkmarx canonical form (CXN-*): what the repair and purl rules alone produce."""
+    return replace(profile, canonical=None)
+
+
 @pytest.fixture
 def checkmarx() -> Profile:
-    return load_profile("checkmarx")
+    return repair_only(load_profile("checkmarx"))
